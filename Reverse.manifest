@@ -1,0 +1,13 @@
+{
+	"autodeskProduct":	"Fusion360",
+	"type":	"addin",
+	"id":	"db8fdf19-2177-43ab-848d-2a6862192960",
+	"author":	"Nico Schlüter",
+	"description":	{
+		"":	"An Addin for reconstructing surfaces from meshes"
+	},
+	"version":	"",
+	"runOnStartup":	false,
+	"supportedOS":	"windows|mac",
+	"editEnabled":	true
+}
