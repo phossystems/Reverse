@@ -7,13 +7,12 @@ import inspect
 import os
 import sys
 
+
 script_path = os.path.abspath(inspect.getfile(inspect.currentframe()))
 script_name = os.path.splitext(os.path.basename(script_path))[0]
 script_dir = os.path.dirname(script_path)
 
 sys.path.append(script_dir + "/Modules")
-
-#print('\n'.join(sys.path))
 
 try:
     import numpy as np
@@ -28,9 +27,6 @@ COMMAND_NAME = "Reverse Engineer"
 COMMAND_TOOLTIP = "Creates Surfaces from Mesh Points"
 
 command_ref = None
-mesh_points = None
-mesh_tris = None
-graphics = None
 shapes = []
    
 TOOLBAR_PANELS = ["SurfaceCreatePanel"]
@@ -50,12 +46,13 @@ class CommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             global command_ref
             command_ref = cmd
 
-            global graphics
-            graphics = adsk.core.Application.get().activeProduct.rootComponent.customGraphicsGroups.add()
-
             # Some common EventHandlers
             # For more Handlers and Info go to:
             # http://help.autodesk.com/view/fusion360/ENU/?guid=GUID-3922697A-7BF1-4799-9A5B-C8539DF57051
+
+
+            #import .commands.VertexSelectionInput
+            vsi = VertexSelectionInput(args)
 
             # Registers the CommandDestryHandler
             onExecute = CommandExecuteHandler()
@@ -82,51 +79,6 @@ class CommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             cmd.mouseClick.add(onMouse)
             _handlers.append(onMouse)
 
-                
-            # Get the CommandInputs collection associated with the command.
-            inputs = cmd.commandInputs
-            
-            # Implements the three UI sections
-            group1 = inputs.addGroupCommandInput('group1', "Selection Settings")
-            group1.isExpanded = True
-
-            group2 = inputs.addGroupCommandInput('group2', "Segments")
-            group2.isExpanded = True
-
-            group3 = inputs.addGroupCommandInput('group3', "Info")
-            group3.isExpanded = False
-
-            #Fist section
-            selectionInput = group1.children.addSelectionInput('selection', 'Mesh', 'Select Mesh')
-            #selectionInput.addSelectionFilter('MeshBody')
-            selectionInput.setSelectionLimits(1, 1)
-
-            floatSpinner1 = group1.children.addFloatSpinnerCommandInput('floatSpinner1', 'Selection Radius', '', 0, 10000, 5, 15)
-
-            boolValue1 = group1.children.addBoolValueInput('boolVale1', 'Select Through', True)
-
-            #Second section
-
-            table1 = group2.children.addTableCommandInput('table1', '', 4, "3:1:2:3")
-            table1.minimumVisibleRows = 4
-            table1.maximumVisibleRows = 8
-
-            updateTable(table1, [[[1,2,3], [1], 2, True, 105], [[1,2,3], [1], 2, True, 105], [[1,2,3], [1], 2, True, 105]])
-
-            boolValue2 = table1.commandInputs.addBoolValueInput('boolValue2', 'New', False, '', True)
-            table1.addToolbarCommandInput(boolValue2)
-
-            boolValue3 = table1.commandInputs.addBoolValueInput('boolValue3', 'Delete', False, '', True)
-            table1.addToolbarCommandInput(boolValue3)
-
-            #Third Section
-            textBox1 = group3.children.addTextBoxCommandInput('textBox1', '', generateInfoText(radius=69, px=420), 13, True)
-            textBox1.isFullWidth = True
-            
-            #Average deviation, Maximum deviation, Position, Orientation, Radius, Length, DImensions
-
-
-           
         except:
             print(traceback.format_exc())
 
@@ -165,7 +117,7 @@ class CommandExecutePreviewHandler(adsk.core.CommandEventHandler):
             # If set to True Fusion will use the last preview instead of calling
             # the ExecuteHandler when the user executes the Command.
             # If the preview is identical to the actual executing this saves recomputation
-            eventArgs.isValidResult = True                
+            eventArgs.isValidResult = False                
             
         except:
             print(traceback.format_exc())
@@ -178,45 +130,7 @@ class CommandMouseClickEventHandler(adsk.core.MouseEventHandler):
         super().__init__()
     def notify(self, args):
         try:
-            #global command_ref
-            global mesh_points
-            global mesh_tris
-
-
-            isPerspective = args.viewport.camera.cameraType == 1
-
-            clickPos3D = np.array(args.viewport.viewToModelSpace(args.viewportPosition).asArray())
-            cameraPos = np.array(args.viewport.camera.eye.asArray())
-
-            app = adsk.core.Application.get()
-            design = app.activeProduct
-            rootComp = design.rootComponent
-
-            sketches = rootComp.sketches
-            xyPlane = rootComp.xYConstructionPlane
-            sketch = sketches.add(xyPlane)
-
-            sketchPoints = sketch.sketchPoints
-            
-            startTime = time.time()
-
-            d = distPtToLine(mesh_points, clickPos3D, cameraPos)
-
-            print("Time:")
-            print(time.time()-startTime)
-            print()
-
-            print(mesh_tris)
-            v = isPointInvisiblePerspecive(mesh_points,cameraPos, mesh_tris)
-
-            for i, j in enumerate(mesh_points):
-                if not v[i]:
-                    sketchPoints.add(adsk.core.Point3D.create(j[0], j[1], j[2]))
-
-            visible = doesLineIntersectTriangle
-
-            
-            
+            pass    
         except:
             print(traceback.format_exc())
 
@@ -233,30 +147,36 @@ class CommandInputChangedHandler(adsk.core.InputChangedEventHandler):
 
             global mesh_points
             global mesh_tris
+            global shapes
 
-            #Removes focus from selectionInput so clicking wont de-select it
-            if inputChanged.id == "selection":
-                if inputChanged.selectionCount == 1:
-                    inputChanged.hasFocus = False
+            #Adds row
+            if inputChanged.id == "boolValue2":
+                shapes.append([[1,2,3], [1], 0, True, 105])
+                updateTable(args.inputs.itemById("table1"), shapes)
 
-                    #TO-DO use nodeCoordinatesAsDouble (returns 1D list that needs to be seperated but is probably faster)
-                    nc = inputChanged.selection(0).entity.displayMesh.nodeCoordinates
+            #Deletes selected row
+            elif inputChanged.id == "boolValue3":
+                table = args.inputs.itemById("table1")
+                if not table.selectedRow == -1:
+                    #table.deleteRow(table.selectedRow)
+                    del shapes[table.selectedRow]
+                    table.selectedRow -= 1
+                    updateTable(table, shapes)
 
-                    mat = GetRootMatrix(inputChanged.selection(0).entity.parentComponent)
-
-                    for i in nc:
-                        i.transformBy(mat)
-                    mesh_points = np.array( [ [i.x, i.y, i.z] for i in nc] )
-                    
-                    print("Node Indecies:")
-                    print(mesh_points)
-
-                    mesh_tris = mesh_points[np.array(inputChanged.selection(0).entity.displayMesh.nodeIndices)].reshape(-1,3,3)
-
-                    
-                    
-                    
-                        
+            #Workaround for StringInputs not being read only (resets it instantly)
+            elif inputChanged.id.startswith("textBoxTable"):
+                updateTable(args.inputs.itemById("table1"), shapes)
+            
+            #Saves changed inputs to shapes
+            elif inputChanged.id.startswith("dropDownTable") or inputChanged.id.startswith("boolValueTable") or inputChanged.id.startswith("textBoxTable") or inputChanged.id.startswith("floatSpinnerTable"):
+                table = args.inputs.itemById("table1")
+                pos = table.getPosition(args.input)
+                if pos[2] == 0:
+                    shapes[ pos[1] ][2] = args.input.selectedItem.index
+                elif pos[2] == 1:
+                    shapes[ pos[1] ][3] = args.input.value
+                elif pos[2] ==3:
+                    shapes[ pos[1] ][4] = args.input.value              
 
         except:
             print(traceback.format_exc())
@@ -270,7 +190,7 @@ class CommandDestroyHandler(adsk.core.CommandEventHandler):
         super().__init__()
     def notify(self, args):
         try:
-            # TODO: Add Destroy stuff
+            #clearCustomGraphicsGroup(graphics)
             pass
         except:
             print(traceback.format_exc())
@@ -280,13 +200,6 @@ class CommandDestroyHandler(adsk.core.CommandEventHandler):
 
 def run(context):
     try:
-        #import sys
-        #print('\n'.join(sys.path))
-
-        
-
-        
-
         app = adsk.core.Application.get()
         ui = app.userInterface
         
@@ -439,8 +352,9 @@ def updateTable(table, shapes):
         bv.value = s[3]
         table.addCommandInput(bv, i, 1)
 
-        tb = table.commandInputs.addTextBoxCommandInput('textBoxTable{}'.format(i), '', '{} ({})'.format(len(s[0])+len(s[1]), len(s[0])), 1, True)
-        table.addCommandInput(tb, i, 2)
+        sv = table.commandInputs.addStringValueInput('textBoxTable{}'.format(i), '', '{} ({})'.format(len(s[0])+len(s[1]), len(s[0])))
+        sv.isReadOnly = True
+        table.addCommandInput(sv,i, 2)
 
         fs = table.commandInputs.addFloatSpinnerCommandInput('floatSpinnerTable{}'.format(i), '', '', 0, 100000, 5, s[4]) 
         table.addCommandInput(fs, i, 3)
@@ -448,5 +362,136 @@ def updateTable(table, shapes):
     table.selectedRow = selected
 
 
+def clearCustomGraphicsGroup(cgg):
+    for i in range(cgg.count):
+        cgg.item(i).deleteMe()
 
-#shape [ [  [selected], [auto-selected], shape, auto, over  ], ... ]
+
+def visualizePoints(cgg, pts):
+    coords = adsk.fusion.CustomGraphicsCoordinates.create(np.asarray(pts.reshape(-1), dtype='d'))
+    cgg.addPointSet(coords, range(len(pts)), 
+                   adsk.fusion.CustomGraphicsPointTypes.UserDefinedCustomGraphicsPointType,
+                   'TestPoint.png')
+
+class VertexSelectionInput:
+    handlers = []
+    mesh_points = None
+    mesh_tris = None
+    slected_points = set()
+
+
+    def __init__(self, args):
+        print("init")
+        self.slected_points = set()
+        
+        cmd = args.command
+        inputs = cmd.commandInputs
+
+        onClick = self.VertexSelectionClickEventHandler(self)
+        cmd.mouseClick.add(onClick)
+        self.handlers.append(onClick)
+
+        onInputChanged = self.VertexSelectionInputChangedEventHandler(self)
+        cmd.inputChanged.add(onInputChanged)
+        self.handlers.append(onInputChanged)
+
+        onExecutePreview = self.VertexSelectionInputExecutePreviewHandler(self)
+        cmd.executePreview.add(onExecutePreview)
+        self.handlers.append(onExecutePreview)
+
+        self.selectionInput = inputs.addSelectionInput('vertexSelectionMesh', 'Mesh', 'Select Mesh')
+        self.selectionInput.addSelectionFilter('MeshBodies')
+        self.selectionInput.setSelectionLimits(0, 1)
+
+        self.floatSpinner = inputs.addFloatSpinnerCommandInput('vertexSelectionRadius', 'Selection Radius', '', 0, 10000, 5, 15)
+
+        self.boolValue = inputs.addBoolValueInput('vertexSelectionThrough', 'Select Through', True)
+        self.boolValue.isEnabled = False
+        self.boolValue.value = True
+        self.boolValue.tooltip = "Placeholder, Disabled due to performance issues"
+
+
+    class VertexSelectionClickEventHandler(adsk.core.MouseEventHandler):
+        def __init__(self, parent):
+            super().__init__()
+            self.parent = parent
+
+        def notify(self, args):
+            try:    
+                if self.parent.mesh_points is not None:
+                    isPerspective = args.viewport.camera.cameraType == 1
+
+                    clickPos3D = np.array(args.viewport.viewToModelSpace(args.viewportPosition).asArray())
+                    cameraPos = np.array(args.viewport.camera.eye.asArray())
+
+                    app = adsk.core.Application.get()
+                    design = app.activeProduct
+                    rootComp = design.rootComponent
+
+                    d = distPtToLine(self.parent.mesh_points, clickPos3D, cameraPos)
+                    '''
+                    print("start")
+                    t = time.time()
+
+                    v = isPointInvisiblePerspecive(self.parent.mesh_points,cameraPos, self.parent.mesh_tris)
+
+                    print()
+                    print("Time:")
+                    print(time.time()-t)
+                    print()
+                    '''
+                    for i, j in enumerate(self.parent.mesh_points):
+                        if d[i] < self.parent.floatSpinner.value/10:
+                            self.parent.slected_points.add(i)
+                    self.parent.boolValue.value = False
+                    self.parent.boolValue.value = True
+            except:
+                print(traceback.format_exc())
+
+        
+    class VertexSelectionInputChangedEventHandler(adsk.core.InputChangedEventHandler):
+        def __init__(self, parent):
+            super().__init__()
+            self.parent = parent
+
+        def notify(self, args):
+            try:
+                inputChanged = args.input
+                if inputChanged.id == "vertexSelectionMesh":
+                    if inputChanged.selectionCount == 1:
+                        inputChanged.hasFocus = False
+                        #TO-DO use nodeCoordinatesAsDouble (returns 1D list that needs to be seperated but is probably faster)
+                        nc = inputChanged.selection(0).entity.displayMesh.nodeCoordinates
+
+                        mat = GetRootMatrix(inputChanged.selection(0).entity.parentComponent)
+
+                        for i in nc:
+                            i.transformBy(mat)
+                        self.parent.mesh_points = np.array( [ [i.x, i.y, i.z] for i in nc] )
+
+                        self.parent.mesh_tris = self.parent.mesh_points[np.array(inputChanged.selection(0).entity.displayMesh.nodeIndices)].reshape(-1,3,3)
+
+            except:
+                print(traceback.format_exc())
+
+
+    class VertexSelectionInputExecutePreviewHandler(adsk.core.CommandEventHandler):
+        def __init__(self, parent):
+            super().__init__()
+            self.parent = parent
+
+        def notify(self, args):
+            try:
+                if self.parent.mesh_points is not None:
+                    pts = self.parent.mesh_points[list(self.parent.slected_points)]
+
+                    cgg = adsk.core.Application.get().activeProduct.rootComponent.customGraphicsGroups.add()
+
+                    coords = adsk.fusion.CustomGraphicsCoordinates.create(np.asarray(pts.reshape(-1), dtype='d'))
+                    
+                    cgg.addPointSet(coords, range(len(pts)), 0, 'TestPoint.png')
+            except:
+                print(traceback.format_exc())
+
+
+  
