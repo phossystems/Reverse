@@ -17,185 +17,25 @@ sys.path.append(script_dir + "/Modules")
 try:
     import numpy as np
     import scipy
+    from scipy import optimize
 finally:
     del sys.path[-1]
 
 _handlers = []
 
-COMMAND_ID = "commandNscReverse"
-COMMAND_NAME = "Reverse Engineer"
-COMMAND_TOOLTIP = "Creates Surfaces from Mesh Points"
-
-command_ref = None
 shapes = []
-   
-TOOLBAR_PANELS = ["SurfaceCreatePanel"]
-
-
-# Fires when the CommandDefinition gets executed.
-# Responsible for adding commandInputs to the command &
-# registering the other command handlers.
-class CommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
-    def __init__(self):
-        super().__init__()
-    def notify(self, args):
-        try:
-            # Get the command that was created.
-            cmd = adsk.core.Command.cast(args.command)
-
-            global command_ref
-            command_ref = cmd
-
-            # Some common EventHandlers
-            # For more Handlers and Info go to:
-            # http://help.autodesk.com/view/fusion360/ENU/?guid=GUID-3922697A-7BF1-4799-9A5B-C8539DF57051
-
-
-            #import .commands.VertexSelectionInput
-            vsi = VertexSelectionInput(args)
-
-            # Registers the CommandDestryHandler
-            onExecute = CommandExecuteHandler()
-            cmd.execute.add(onExecute)
-            _handlers.append(onExecute)  
-            
-            # Registers the CommandExecutePreviewHandler
-            onExecutePreview = CommandExecutePreviewHandler()
-            cmd.executePreview.add(onExecutePreview)
-            _handlers.append(onExecutePreview)
-            
-            # Registers the CommandInputChangedHandler          
-            onInputChanged = CommandInputChangedHandler()
-            cmd.inputChanged.add(onInputChanged)
-            _handlers.append(onInputChanged)            
-            
-            # Registers the CommandDestryHandler
-            onDestroy = CommandDestroyHandler()
-            cmd.destroy.add(onDestroy)
-            _handlers.append(onDestroy)
-
-            # Registers the CommandMouseHandler
-            onMouse = CommandMouseClickEventHandler()
-            cmd.mouseClick.add(onMouse)
-            _handlers.append(onMouse)
-
-        except:
-            print(traceback.format_exc())
 
 
 
 
-#Fires when the User executes the Command
-#Responsible for doing the changes to the document
-class CommandExecuteHandler(adsk.core.CommandEventHandler):
-    def __init__(self):
-        super().__init__()
-    def notify(self, args):
-        try:
-            print("execute")
-            # TODO: Add Command Execution Stuf Here
-            pass                
-            
-        except:
-            print(traceback.format_exc())
 
 
 
 
-# Fires when the Command is being created or when Inputs are being changed
-# Responsible for generating a preview of the output.
-# Changes done here are temporary and will be cleaned up automatically.
-class CommandExecutePreviewHandler(adsk.core.CommandEventHandler):
-    def __init__(self):
-        super().__init__()
-    def notify(self, args):
-        try:
-            eventArgs = adsk.core.CommandEventArgs.cast(args)
-            
-            # TODO: Add Command Execution Preview Stuff Here
-            
-            # If set to True Fusion will use the last preview instead of calling
-            # the ExecuteHandler when the user executes the Command.
-            # If the preview is identical to the actual executing this saves recomputation
-            eventArgs.isValidResult = False                
-            
-        except:
-            print(traceback.format_exc())
 
 
-
-# Fires wwhen a MouseEvent occurs
-class CommandMouseClickEventHandler(adsk.core.MouseEventHandler):
-    def __init__(self):
-        super().__init__()
-    def notify(self, args):
-        try:
-            pass    
-        except:
-            print(traceback.format_exc())
-
-
-
-# Fires when CommandInputs are changed
-# Responsible for dynamically updating other Command Inputs
-class CommandInputChangedHandler(adsk.core.InputChangedEventHandler):
-    def __init__(self):
-        super().__init__()
-    def notify(self, args):
-        try:
-            inputChanged = args.input
-
-            global mesh_points
-            global mesh_tris
-            global shapes
-
-            #Adds row
-            if inputChanged.id == "boolValue2":
-                shapes.append([[1,2,3], [1], 0, True, 105])
-                updateTable(args.inputs.itemById("table1"), shapes)
-
-            #Deletes selected row
-            elif inputChanged.id == "boolValue3":
-                table = args.inputs.itemById("table1")
-                if not table.selectedRow == -1:
-                    #table.deleteRow(table.selectedRow)
-                    del shapes[table.selectedRow]
-                    table.selectedRow -= 1
-                    updateTable(table, shapes)
-
-            #Workaround for StringInputs not being read only (resets it instantly)
-            elif inputChanged.id.startswith("textBoxTable"):
-                updateTable(args.inputs.itemById("table1"), shapes)
-            
-            #Saves changed inputs to shapes
-            elif inputChanged.id.startswith("dropDownTable") or inputChanged.id.startswith("boolValueTable") or inputChanged.id.startswith("textBoxTable") or inputChanged.id.startswith("floatSpinnerTable"):
-                table = args.inputs.itemById("table1")
-                pos = table.getPosition(args.input)
-                if pos[2] == 0:
-                    shapes[ pos[1] ][2] = args.input.selectedItem.index
-                elif pos[2] == 1:
-                    shapes[ pos[1] ][3] = args.input.value
-                elif pos[2] ==3:
-                    shapes[ pos[1] ][4] = args.input.value              
-
-        except:
-            print(traceback.format_exc())
-                
-                
-                
-# Fires when the Command gets Destroyed regardless of success
-# Responsible for cleaning up                 
-class CommandDestroyHandler(adsk.core.CommandEventHandler):
-    def __init__(self):
-        super().__init__()
-    def notify(self, args):
-        try:
-            #clearCustomGraphicsGroup(graphics)
-            pass
-        except:
-            print(traceback.format_exc())
-
-
+# ============================== Addin Start & Stop  ==============================
+# Responsible for createing and cleaning up commands & UI stuff
 
 
 def run(context):
@@ -204,45 +44,168 @@ def run(context):
         ui = app.userInterface
         
         commandDefinitions = ui.commandDefinitions
-        #check the command exists or not
-        cmdDef = commandDefinitions.itemById(COMMAND_ID)
-        if not cmdDef:
-            cmdDef = commandDefinitions.addButtonDefinition(COMMAND_ID, COMMAND_NAME,
-                                                            COMMAND_TOOLTIP, '')
-        #Adds the commandDefinition to the toolbar
-        for panel in TOOLBAR_PANELS:
-            ui.allToolbarPanels.itemById(panel).controls.addCommand(cmdDef)
+
+        tabReverse = ui.allToolbarTabs.itemById("tabReverse")
+        if tabReverse:
+            tabReverse.deleteMe()
+
+        tabReverse = ui.workspaces.itemById("FusionSolidEnvironment").toolbarTabs.add("tabReverse", "Reverse Engineer")
+
+        panelSetup = ui.allToolbarPanels.itemById("panelReverseSetup")
+        if panelSetup:
+            panelSetup.deleteMe()
+
+        panelSetup = tabReverse.toolbarPanels.add("panelReverseSetup", "Setup")
+
         
-        onCommandCreated = CommandCreatedHandler()
+
+        cmdDef = commandDefinitions.itemById("commandReversePlace")
+        if cmdDef:
+            cmdDef.deleteMe()
+
+        cmdDef = commandDefinitions.addButtonDefinition("commandReversePlace", "Place",
+                                                        "Places Mesh on XY Plane", '')
+        
+
+        onCommandCreated = CommandPlaceCreatedHandler()
         cmdDef.commandCreated.add(onCommandCreated)
         _handlers.append(onCommandCreated)
 
+        panelSetup.controls.addCommand(cmdDef)
+
     except:
         print(traceback.format_exc())
-
-
 
 
 def stop(context):
     try:
         app = adsk.core.Application.get()
         ui = app.userInterface
-        
-        #Removes the commandDefinition from the toolbar
-        for panel in TOOLBAR_PANELS:
-            p = ui.allToolbarPanels.itemById(panel).controls.itemById(COMMAND_ID)
-            if p:
-                p.deleteMe()
-        
-        #Deletes the commandDefinition
-        ui.commandDefinitions.itemById(COMMAND_ID).deleteMe()
-
     except:
         print(traceback.format_exc())
 
-# a = Point b,c = Line
-def distPtToLine(a, b, c):
-    return np.linalg.norm( np.cross(c-b, b-a), axis=1) / np.linalg.norm(c-b)
+
+
+
+
+
+
+
+
+
+# ============================== Place command ==============================
+
+
+# Fires when the CommandDefinition gets executed.
+# Responsible for adding commandInputs to the command &
+# registering the other command handlers.
+class CommandPlaceCreatedHandler(adsk.core.CommandCreatedEventHandler):
+    def __init__(self):
+        super().__init__()
+    def notify(self, args):
+        try:
+            # Get the command that was created.
+            cmd = args.command
+
+            #import .commands.VertexSelectionInput
+            vsi = VertexSelectionInput(args)
+
+            # Registers the CommandDestryHandler
+            onExecute = CommandPlaceExecuteHandler(vsi)
+            cmd.execute.add(onExecute)
+            _handlers.append(onExecute)  
+
+        except:
+            print(traceback.format_exc())
+
+
+#Fires when the User executes the Command
+#Responsible for doing the changes to the document
+class CommandPlaceExecuteHandler(adsk.core.CommandEventHandler):
+    def __init__(self, vsi):
+        self.vsi = vsi
+        super().__init__()
+    def notify(self, args):
+        try:
+            if self.vsi.selected_points:
+
+                crds = self.vsi.mesh_points[ list(self.vsi.selected_points) ]
+
+                res = fitPlaneToPoints( crds , seed=np.concatenate((crds[0], np.cross(crds[0]-crds[-1], crds[1]-crds[-1]) )))
+
+                print(res)
+
+                app = adsk.core.Application.get()
+                des = app.activeProduct
+                root = des.rootComponent
+                bodies = root.bRepBodies
+
+                des.designType = 0
+
+                
+                '''
+                tbm = adsk.fusion.TemporaryBRepManager.get()
+
+                #Array to keep track of TempBRepBodies
+                tempBRepBodies = []
+
+                cylinder = tbm.createCylinderOrCone(adsk.core.Point3D.create(res.x[0], res.x[1], res.x[2]),
+                                                    5,
+                                                    adsk.core.Point3D.create(res.x[0]+res.x[3]/100, res.x[1]+res.x[4]/100, res.x[2]+res.x[5]/100),
+                                                    5)
+                tempBRepBodies.append(cylinder)
+
+                for b in tempBRepBodies:
+                    bodies.add(b)
+                '''
+                
+                #print(root.allOccurrencesByComponent(self.vsi.selectionInput.selection(0).entity.parentComponent).count)
+                #print(self.vsi.selectionInput.selection(0).entity)
+
+                bodies = adsk.core.ObjectCollection.create()
+                bodies.add(self.vsi.selectionInput.selection(0).entity)
+
+                # Create a transform to do move
+                vector = adsk.core.Vector3D.create(0.0, 10.0, 0.0)
+                transform = adsk.core.Matrix3D.create()
+
+                transform.setToRotation(3.14/4, adsk.core.Vector3D.create(0,0,1), adsk.core.Point3D.create(0,0,0))
+
+                #adsk.core.Vector3D.create(res.x[3], res.x[4], res.x[5])
+
+                #transform.setToRotateTo(adsk.core.Vector3D.create(0,1,0),
+                #                        adsk.core.Vector3D.create(0,0,1))
+
+                #transform.setToRotateTo(adsk.core.Vector3D.create(res.x[3], res.x[4], res.x[5]),
+                #                        adsk.core.Vector3D.create(0,0,1))
+
+
+                # Create a move feature
+                moveFeats = root.features.moveFeatures
+                moveFeatureInput = moveFeats.createInput(bodies, transform)
+                moveFeats.add(moveFeatureInput)
+            
+        except:
+            print(traceback.format_exc())
+
+
+
+
+                
+                
+                
+
+
+
+
+# p = Point a,b = Line
+def distPtToLine(p, a, b):
+    return np.linalg.norm( np.cross(b-a, a-p), axis=1) / np.linalg.norm(b-a)
+
+
+# p = Point o = Plane Origin n = Plane normal
+def distPtToPlane(p, o, n):
+    return np.dot( (p-o), n ) / np.linalg.norm(n)
 
 
 def isPointInvisiblePerspecive(points, cameraPos, tris):
@@ -267,8 +230,15 @@ def spv(a, b, c, d):
 
 #Returns point and vector [px, py, pz, vx, vy, vz]
 def fitLineToPoints(pts):
-    return scipy.optimize.minimize(lambda x: np.sum(distPtToLine(pts, np.array([x[0], x[1], x[2]]), np.array([x[0] + x[3], x[1] + x[4], x[2]+ x[5]]))**2), np.ones(6) , method = 'Nelder-Mead').x
+    return scipy.optimize.minimize(lambda x: np.sum(distPtToLine(pts, np.array([x[0], x[1], x[2]]), np.array([x[0] + x[3], x[1] + x[4], x[2]+ x[5]]))**2), np.ones(6) , method = 'Powell').x
     
+
+def fitPlaneToPoints(pts, seed=np.array([1,1,1,1,1,1])):
+    return scipy.optimize.minimize(lambda x: np.sum(
+
+        distPtToPlane(pts, np.array([x[0], x[1], x[2]]), np.array([x[3], x[4], x[5]]))**2
+        
+        ), seed , method = 'Powell')
 
 #Returns point, vector and radius [px, py, pz, vx, vy, vz, r]
 def fitCylinderToPonts(pts):
@@ -377,12 +347,12 @@ class VertexSelectionInput:
     handlers = []
     mesh_points = None
     mesh_tris = None
-    slected_points = set()
+    selected_points = set()
 
 
     def __init__(self, args):
         print("init")
-        self.slected_points = set()
+        self.selected_points = set()
         
         cmd = args.command
         inputs = cmd.commandInputs
@@ -403,7 +373,7 @@ class VertexSelectionInput:
         self.selectionInput.addSelectionFilter('MeshBodies')
         self.selectionInput.setSelectionLimits(0, 1)
 
-        self.floatSpinner = inputs.addFloatSpinnerCommandInput('vertexSelectionRadius', 'Selection Radius', '', 0, 10000, 5, 15)
+        self.floatSpinner = inputs.addFloatSpinnerCommandInput('vertexSelectionRadius', 'Selection Radius', '', 0, 10000, 5, 0.5)
 
         self.boolValue = inputs.addBoolValueInput('vertexSelectionThrough', 'Select Through', True)
         self.boolValue.isEnabled = False
@@ -442,7 +412,9 @@ class VertexSelectionInput:
                     '''
                     for i, j in enumerate(self.parent.mesh_points):
                         if d[i] < self.parent.floatSpinner.value/10:
-                            self.parent.slected_points.add(i)
+                            self.parent.selected_points.add(i)
+
+                    #Update UI
                     self.parent.boolValue.value = False
                     self.parent.boolValue.value = True
             except:
@@ -483,7 +455,7 @@ class VertexSelectionInput:
         def notify(self, args):
             try:
                 if self.parent.mesh_points is not None:
-                    pts = self.parent.mesh_points[list(self.parent.slected_points)]
+                    pts = self.parent.mesh_points[list(self.parent.selected_points)]
 
                     cgg = adsk.core.Application.get().activeProduct.rootComponent.customGraphicsGroups.add()
 
