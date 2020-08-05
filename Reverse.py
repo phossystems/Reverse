@@ -8,6 +8,14 @@ import os
 import sys
 
 
+# Enables experimental features
+DEV = True
+
+
+
+# ============================== Imports NumPy & SciPy  ==============================
+
+
 script_path = os.path.abspath(inspect.getfile(inspect.currentframe()))
 script_name = os.path.splitext(os.path.basename(script_path))[0]
 script_dir = os.path.dirname(script_path)
@@ -21,9 +29,10 @@ try:
 finally:
     del sys.path[-1]
 
+
+
 _handlers = []
 
-shapes = []
 
 
 
@@ -42,6 +51,13 @@ def run(context):
     try:
         app = adsk.core.Application.get()
         ui = app.userInterface
+
+        '''
+        defs = ui.commandDefinitions
+        for i in range(defs.count):
+            print(defs.item(i).id)
+
+        '''
         
         commandDefinitions = ui.commandDefinitions
 
@@ -51,27 +67,57 @@ def run(context):
 
         tabReverse = ui.workspaces.itemById("FusionSolidEnvironment").toolbarTabs.add("tabReverse", "Reverse Engineer")
 
+        # Setup
         panelSetup = ui.allToolbarPanels.itemById("panelReverseSetup")
         if panelSetup:
             panelSetup.deleteMe()
-
         panelSetup = tabReverse.toolbarPanels.add("panelReverseSetup", "Setup")
 
-        
+        # Create
+        panelCreate = ui.allToolbarPanels.itemById("panelReverseCreate")
+        if panelCreate:
+            panelCreate.deleteMe()
+        panelCreate = tabReverse.toolbarPanels.add("panelReverseCreate", "Create")
 
+        # Insert
+        panelInsert = ui.allToolbarPanels.itemById("panelReverseInsert")
+        if panelInsert:
+            panelInsert.deleteMe()
+        panelInsert = tabReverse.toolbarPanels.add("panelReverseInsert", "Insert")
+
+        
+        # Place Command
         cmdDef = commandDefinitions.itemById("commandReversePlace")
         if cmdDef:
             cmdDef.deleteMe()
-
-        cmdDef = commandDefinitions.addButtonDefinition("commandReversePlace", "Place",
-                                                        "Places Mesh on XY Plane", '')
-        
+        if(DEV):
+            cmdDef = commandDefinitions.addButtonDefinition("commandReversePlace", "[WIP] Place",
+                                                            "Places Mesh on XY Plane", 'Resources/Placeholder')
 
         onCommandCreated = CommandPlaceCreatedHandler()
         cmdDef.commandCreated.add(onCommandCreated)
         _handlers.append(onCommandCreated)
 
-        panelSetup.controls.addCommand(cmdDef)
+        panelSetup.controls.addCommand(cmdDef).isPromoted = True
+
+
+        # Cylinder Command
+        cmdDef = commandDefinitions.itemById("commandReverseCylinder")
+        if cmdDef:
+            cmdDef.deleteMe()
+        if(DEV):
+            cmdDef = commandDefinitions.addButtonDefinition("commandReverseCylinder", "Cylinder",
+                                                            "Reconstructs a cylindrical face", 'Resources/Placeholder')
+
+        onCommandCreated = CommandCylinderCreatedHandler()
+        cmdDef.commandCreated.add(onCommandCreated)
+        _handlers.append(onCommandCreated)
+
+        panelCreate.controls.addCommand(cmdDef).isPromoted = True
+
+        panelInsert.controls.addCommand(ui.commandDefinitions.itemById("InsertMeshCommand")).isPromoted = True
+
+
 
     except:
         print(traceback.format_exc())
@@ -128,9 +174,12 @@ class CommandPlaceExecuteHandler(adsk.core.CommandEventHandler):
     def notify(self, args):
         try:
             if self.vsi.selected_points:
-
+                
+                # Gets actual coordinates from selected indexes
                 crds = self.vsi.mesh_points[ list(self.vsi.selected_points) ]
 
+                # Fits a plane to the set of coordinates
+                # result contains metadata res.x is actual result
                 res = fitPlaneToPoints( crds , seed=np.concatenate((crds[0], np.cross(crds[0]-crds[-1], crds[1]-crds[-1]) )))
 
                 print(res)
@@ -141,49 +190,112 @@ class CommandPlaceExecuteHandler(adsk.core.CommandEventHandler):
                 bodies = root.bRepBodies
 
                 des.designType = 0
-
                 
-                '''
-                tbm = adsk.fusion.TemporaryBRepManager.get()
-
-                #Array to keep track of TempBRepBodies
-                tempBRepBodies = []
-
-                cylinder = tbm.createCylinderOrCone(adsk.core.Point3D.create(res.x[0], res.x[1], res.x[2]),
-                                                    5,
-                                                    adsk.core.Point3D.create(res.x[0]+res.x[3]/100, res.x[1]+res.x[4]/100, res.x[2]+res.x[5]/100),
-                                                    5)
-                tempBRepBodies.append(cylinder)
-
-                for b in tempBRepBodies:
-                    bodies.add(b)
-                '''
-                
-                #print(root.allOccurrencesByComponent(self.vsi.selectionInput.selection(0).entity.parentComponent).count)
-                #print(self.vsi.selectionInput.selection(0).entity)
-
                 bodies = adsk.core.ObjectCollection.create()
                 bodies.add(self.vsi.selectionInput.selection(0).entity)
 
-                # Create a transform to do move
-                vector = adsk.core.Vector3D.create(0.0, 10.0, 0.0)
                 transform = adsk.core.Matrix3D.create()
-
-                transform.setToRotation(3.14/4, adsk.core.Vector3D.create(0,0,1), adsk.core.Point3D.create(0,0,0))
-
-                #adsk.core.Vector3D.create(res.x[3], res.x[4], res.x[5])
-
-                #transform.setToRotateTo(adsk.core.Vector3D.create(0,1,0),
-                #                        adsk.core.Vector3D.create(0,0,1))
-
-                #transform.setToRotateTo(adsk.core.Vector3D.create(res.x[3], res.x[4], res.x[5]),
-                #                        adsk.core.Vector3D.create(0,0,1))
-
+                transform.setToRotateTo(adsk.core.Vector3D.create(0,0,1), adsk.core.Vector3D.create(res.x[3], res.x[4], res.x[5]) )
 
                 # Create a move feature
                 moveFeats = root.features.moveFeatures
                 moveFeatureInput = moveFeats.createInput(bodies, transform)
                 moveFeats.add(moveFeatureInput)
+            
+        except:
+            print(traceback.format_exc())
+
+
+
+
+
+
+
+
+
+
+# ============================== Cylinder command ==============================
+
+
+# Fires when the CommandDefinition gets executed.
+# Responsible for adding commandInputs to the command &
+# registering the other command handlers.
+class CommandCylinderCreatedHandler(adsk.core.CommandCreatedEventHandler):
+    def __init__(self):
+        super().__init__()
+    def notify(self, args):
+        try:
+            # Get the command that was created.
+            cmd = args.command
+
+            #import .commands.VertexSelectionInput
+            vsi = VertexSelectionInput(args)
+
+            # Registers the CommandDestryHandler
+            onExecute = CommandCylinderExecuteHandler(vsi)
+            cmd.execute.add(onExecute)
+            _handlers.append(onExecute)  
+
+        except:
+            print(traceback.format_exc())
+
+
+#Fires when the User executes the Command
+#Responsible for doing the changes to the document
+class CommandCylinderExecuteHandler(adsk.core.CommandEventHandler):
+    def __init__(self, vsi):
+        self.vsi = vsi
+        super().__init__()
+    def notify(self, args):
+        try:
+            if self.vsi.selected_points:
+                
+                # Gets actual coordinates from selected indexes
+                crds = self.vsi.mesh_points[ list(self.vsi.selected_points) ]
+
+                avgCrds = np.average(crds, axis=0)
+
+                # Fits a plane to the set of coordinates
+                # result contains metadata res.x is actual result
+                res = fitCylinderToPonts(crds, seed = np.array([avgCrds[0], avgCrds[1], avgCrds[2], 1, 1, 1, 2.5]))
+
+                if(DEV):
+                    print(res)
+                
+                # Bounds of cylinder as scalar
+                bounds = cylinderBounds(crds, np.array(res.x[0:3]), np.array(res.x[3:6]))
+
+                #Origin Vector
+                o = np.array(res.x[0:3])
+
+                #Normalized Normal Vector
+                n = np.array(res.x[3:6]) / np.linalg.norm(np.array(res.x[3:6]))
+
+                # Start and End Points
+                p1 = o + n * bounds[0]
+                p2 = o + n * bounds[1]
+
+                app = adsk.core.Application.get()
+                des = app.activeProduct
+                root = des.rootComponent
+                bodies = root.bRepBodies
+
+                des.designType = 0
+                
+                tbm = adsk.fusion.TemporaryBRepManager.get()
+
+                tempBRepBodies = []
+
+                cylinder = tbm.createCylinderOrCone(adsk.core.Point3D.create(p2[0], p2[1], p2[2]),
+                                            res.x[6],
+                                            adsk.core.Point3D.create(p1[0], p1[1], p1[2]),
+                                            res.x[6])
+                tempBRepBodies.append(cylinder)
+
+                for b in tempBRepBodies:
+                    bodies.add(b)
+                
+                
             
         except:
             print(traceback.format_exc())
@@ -229,8 +341,8 @@ def spv(a, b, c, d):
 
 
 #Returns point and vector [px, py, pz, vx, vy, vz]
-def fitLineToPoints(pts):
-    return scipy.optimize.minimize(lambda x: np.sum(distPtToLine(pts, np.array([x[0], x[1], x[2]]), np.array([x[0] + x[3], x[1] + x[4], x[2]+ x[5]]))**2), np.ones(6) , method = 'Powell').x
+def fitLineToPoints(pts, seed=np.array([1,1,1,1,1,1])):
+    return scipy.optimize.minimize(lambda x: np.sum(distPtToLine(pts, np.array([x[0], x[1], x[2]]), np.array([x[0] + x[3], x[1] + x[4], x[2]+ x[5]]))**2), seed , method = 'Powell')
     
 
 def fitPlaneToPoints(pts, seed=np.array([1,1,1,1,1,1])):
@@ -241,14 +353,19 @@ def fitPlaneToPoints(pts, seed=np.array([1,1,1,1,1,1])):
         ), seed , method = 'Powell')
 
 #Returns point, vector and radius [px, py, pz, vx, vy, vz, r]
-def fitCylinderToPonts(pts):
-    return scipy.optimize.minimize(lambda x: np.sum((distPtToLine(pts, np.array([x[0], x[1], x[2]]), np.array([x[0] + x[3], x[1] + x[4], x[2]+ x[5]]))-x[6])**2) , np.ones(7) , method = "Powell").x
+def fitCylinderToPonts(pts, seed=np.array([1,1,1,1,1,1,1])):
+    return scipy.optimize.minimize(lambda x: np.sum((distPtToLine(pts, np.array([x[0], x[1], x[2]]), np.array([x[0] + x[3], x[1] + x[4], x[2]+ x[5]]))-x[6])**2) , seed , method = "Powell")
   
 
 #Returns point, radius [px, py, pz, r]
-def fitSphereToPoints(pts):
-    return scipy.optimize.minimize(lambda x: np.sum((np.linalg.norm(pts-np.array([x[0], x[1], x[2]]), axis=1)-x[3])**2) , np.ones(4) , method = "Powell")
+def fitSphereToPoints(pts, seed=np.array([1,1,1,1])):
+    return scipy.optimize.minimize(lambda x: np.sum((np.linalg.norm(pts-np.array([x[0], x[1], x[2]]), axis=1)-x[3])**2) , seed , method = "Powell")
   
+
+def cylinderBounds(pts, o, n):
+    d = distPtToPlane(pts, o, n)
+    return np.array([min(d), max(d)])
+
 
 def GetRootMatrix(comp):
     comp = adsk.fusion.Component.cast(comp)
@@ -276,72 +393,16 @@ def GetRootMatrix(comp):
     return mat
 
 
-def generateInfoText(avgD=None, maxD=None, px=None, py=None, pz=None, vx=None, vy=None, vz=None, radius=None, length=None, dim=None):
-    text = []
-    if(avgD):
-        text.append("Average Deviation  . . . :  {}\n".format(avgD))
-    if(maxD):
-        text.append("Maximum Deviation . . :  {}\n".format(maxD))
-    if(px):
-        text.append("Position X  . . . . . . . . . :  {}\n".format(px))
-    if(py):
-        text.append("Position Y  . . . . . . . . . :  {}\n".format(py))
-    if(pz):
-        text.append("Position Z  . . . . . . . . . :  {}\n".format(pz))
-    if(vx):
-        text.append("Orientation X . . . . . . . :  {}\n".format(vx))
-    if(vy):
-        text.append("Orientation Y . . . . . . . :  {}\n".format(vy))
-    if(vz):
-        text.append("Orientation Z . . . . . . . :  {}\n".format(vz))
-    if(radius):
-        text.append("Radius . . . . . . . . . . . . :  {}\n".format(radius))
-    if(length):
-        text.append("Length . . . . . . . . . . . . :  {}\n".format(length))
-    if(dim):
-        text.append("Dimensions . . . . . . . . :  {}\n".format(dim))
-    return ''.join(text)
 
 
-def updateTable(table, shapes):
-    selected = table.selectedRow
-
-    table.clear()
-
-    for i, s in enumerate(shapes):
-        dd = table.commandInputs.addDropDownCommandInput('dropDownTable{}'.format(i), '', 0)
-        dd.listItems.add("Flat", s[2]==0, '')
-        dd.listItems.add("Cylinder", s[2]==1, '')
-        dd.listItems.add("Sphere", s[2]==2, '')
-        dd.listItems.add("Plane", s[2]==3, '')
-        dd.listItems.add("Line", s[2]==4, '')
-        dd.listItems.add("Point", s[2]==5, '')
-        table.addCommandInput(dd, i, 0)
-
-        bv = table.commandInputs.addBoolValueInput('boolValueTable{}'.format(i), 'Auto', True)
-        bv.value = s[3]
-        table.addCommandInput(bv, i, 1)
-
-        sv = table.commandInputs.addStringValueInput('textBoxTable{}'.format(i), '', '{} ({})'.format(len(s[0])+len(s[1]), len(s[0])))
-        sv.isReadOnly = True
-        table.addCommandInput(sv,i, 2)
-
-        fs = table.commandInputs.addFloatSpinnerCommandInput('floatSpinnerTable{}'.format(i), '', '', 0, 100000, 5, s[4]) 
-        table.addCommandInput(fs, i, 3)
-
-    table.selectedRow = selected
 
 
-def clearCustomGraphicsGroup(cgg):
-    for i in range(cgg.count):
-        cgg.item(i).deleteMe()
 
 
-def visualizePoints(cgg, pts):
-    coords = adsk.fusion.CustomGraphicsCoordinates.create(np.asarray(pts.reshape(-1), dtype='d'))
-    cgg.addPointSet(coords, range(len(pts)), 
-                   adsk.fusion.CustomGraphicsPointTypes.UserDefinedCustomGraphicsPointType,
-                   'TestPoint.png')
+
+
+# ============================== Selection Input for Vertexes ==============================# 
+
 
 class VertexSelectionInput:
     handlers = []
@@ -458,6 +519,8 @@ class VertexSelectionInput:
                     pts = self.parent.mesh_points[list(self.parent.selected_points)]
 
                     cgg = adsk.core.Application.get().activeProduct.rootComponent.customGraphicsGroups.add()
+
+                    print(np.asarray(pts.reshape(-1), dtype='d'))
 
                     coords = adsk.fusion.CustomGraphicsCoordinates.create(np.asarray(pts.reshape(-1), dtype='d'))
                     
