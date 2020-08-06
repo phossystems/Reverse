@@ -26,6 +26,7 @@ try:
     import numpy as np
     import scipy
     from scipy import optimize
+    import math
 finally:
     del sys.path[-1]
 
@@ -253,11 +254,11 @@ class CommandCylinderExecuteHandler(adsk.core.CommandEventHandler):
                 # Gets actual coordinates from selected indexes
                 crds = self.vsi.mesh_points[ list(self.vsi.selected_points) ]
 
-                avgCrds = np.average(crds, axis=0)
-
                 # Fits a plane to the set of coordinates
                 # result contains metadata res.x is actual result
-                res = fitCylinderToPonts(crds, seed = np.array([avgCrds[0], avgCrds[1], avgCrds[2], 1, 1, 1, 2.5]))
+                # avgCrds = np.average(crds, axis=0)
+                # res = fitCylinderToPonts(crds, seed = np.array([avgCrds[0], avgCrds[1], avgCrds[2], 1, 1, 1, 2.5]))
+                res = fitCylinderToPoints(crds)
 
                 if(DEV):
                     print(res)
@@ -357,6 +358,136 @@ def fitCylinderToPonts(pts, seed=np.array([1,1,1,1,1,1,1])):
     return scipy.optimize.minimize(lambda x: np.sum((distPtToLine(pts, np.array([x[0], x[1], x[2]]), np.array([x[0] + x[3], x[1] + x[4], x[2]+ x[5]]))-x[6])**2) , seed , method = "Powell")
   
 
+# Generates a 3D unit vector given two spherical angles
+#  Inputs:
+#    ang: an array containing a (polar) angle from the Z axis and an (azimuth) angle in the X-Y plane from the X axis, in radians
+#  Outputs:
+#    a 3D unit vector defined by the input angles (input = [0,0] -> output = [0,0,1])
+def sphericalToDirection(ang):
+    """Construct a unit vector from spherical coordinates."""
+    return [math.cos(ang[0]) * math.sin(ang[1]), math.sin(ang[0]) * math.sin(ang[1]), math.cos(ang[1])]
+
+# Simple solution definiton
+class Soln():
+    pass
+
+
+# Solves for the parameters of an infinite cylinder given a set of 3D cartesian points
+#  Inputs:
+#    pts: a Nx3 array of points on the cylinder, ideally well-distributed radially with some axial variation
+#  Outputs a solution object containing members:
+#    x: estimated cylinder origin, axis, and radius parameters [ px, py, pz, ax, ay, az, r ]
+#    fun: non-dimensional residual of the fit to be used as a quality metric
+#  Method:
+#  - The general approach is a hybrid search where several parameters are handled using iterative optimization and the rest are directly solved for
+#  - The outer search is performed over possible cylinder orientations (represented by two angles)
+#    - A huge advantage is that these parameters are bounded, making search space coverage tractable despite the multiple local minima
+#    - Reducing the iterative search space to two parameters dramatically helps iteration time as well
+#    - To help ensure the global minimum is found, a coarse grid method is used over the bounded parameters
+#    - A gradient method is used to refine the found coarse global minimum
+#  - For each orientation, a direct (ie, non-iterative) LSQ solution is used for the other 3 paremeters
+#    - This can be visualized as checking how "circular" the set of points appears when looking along the expected axis of the cylinder
+#  - Note that no initial guess is needed since whole orientation is grid-searched and the other parameters are found directly without iteration
+def fitCylinderToPoints(pts):
+    """Solve for 3D parameters of an infinite cylinder given pts that lie on the cylinder surface."""
+    # Create search grid for orientation angles
+    # (note, may need to increase number of grid points in cases of poorly defined point sets)
+    ranges = (slice(0, 2*math.pi, math.pi/4), slice(0, math.pi, math.pi/4))
+
+    # Perform brute force grid search for approximate global minimum location followed by iterative fine convergence
+    # (note, this can probably be replaced with a different global search method, ie simulated annealing, 
+    #   but the grid search should work reasonably well given that the search space is bounded)
+    sol = scipy.optimize.brute(lambda x: fitCylinderOnAxis(pts, sphericalToDirection(x))[1], ranges, finish=scipy.optimize.fmin)
+
+    # Calculate desired parameters from the found cylinder orientation
+    axis = sphericalToDirection(sol)    
+    result = fitCylinderOnAxis(pts, axis)
+    circle_params = result[0]    
+    resid = result[1]
+    cylinder_params = [circle_params[0], circle_params[1], circle_params[2], axis[0], axis[1], axis[2], circle_params[3]]
+
+    # Mimic return elements in scipy.optimize.minimize functions
+    res = Soln()
+    setattr(res, 'x', cylinder_params)
+    setattr(res, 'fun', resid)
+    return res
+
+
+# Solves for some parameters of an infinite cylinder given a set of 3D cartesian points and an axis for the cylinder
+#  Inputs:
+#    pts: a Nx3 array of points on the cylinder, ideally well-distributed radially with some axial variation
+#    axis: a vector containing the central axis direction of the cylinder
+#  Outputs a tuple containing:
+#    pest: estimated cylinder origin and radius parameters [ px, py, pz, r ]
+#    resid: non-dimensional residual of the fit to be used as a quality metric
+#  Method:
+#    - Generates a set of orthonormal basis vectors based on the input cylinder axis
+#    - Forms a direction cosine matrix from the basis vectors and rotates the points into the cylinder frame
+#    - Collapses the points along the cylinder axis and runs 2D circle estimation to get the lateral offset and radius
+#    - Along-axis offset is meaningless for an infinite cylinder, so the mean of the input points in that direction is arbitrarily used
+#    - Maps the offsets back to the original coordinate system
+#    - Note that the returned residual is the 2D circular fit metric
+def fitCylinderOnAxis(pts, axis=np.array([0,0,1])):
+    """Solve for offset and radius parameters of a cylinder given its central axis and pts that lie on the cylinder surface."""
+    # Create basis vectors for transformed coordinate system
+    w = axis
+    u = np.cross(w,np.array([w[1],w[2],w[0]]))
+    u = u / np.linalg.norm(u)
+    v = np.cross(w,u)
+    
+    # Construct DCM and rotate points into cylinder frame
+    C = np.array([u, v, w]).transpose()
+    pts3d = np.array(pts)
+    N = len(pts3d)
+    pts3drot = pts3d.dot(C)
+
+    # Convert to 2D circle problem and solve for fit
+    pts2d = pts3drot[0:N,0:2]
+    result = fitCircle2D(pts2d)
+    x2d = result[0]
+    resid = result[1]
+
+    # Compute mean axial offset and map back into original frame
+    # (note, may better to use midpoint of min/max rather than the mean)
+    x3d = C.dot(np.array([x2d[0], x2d[1], np.sum(pts3drot[0:N,2])/N]))
+    pest = np.append(x3d, x2d[2])    
+    return (pest, resid)
+
+
+# Solves for the 2D parameters of a circle given a set of 2D (x,y) points
+#  Inputs:
+#    pts: a Nx3 array of points on the cylinder, 3 points minimum, ideally well-distributed
+#  Outputs a tuple containing:
+#    pest: estimated 2D parameters [ px, py, r ]
+#    resid: non-dimensional residual of the fit to be used as a quality metric
+#  Method:
+#    - Reparameterizes the problem into a nondimensional linear form through a change of variables
+#    - 2D parameters are solved for directly using linear least squares rather than an iterative method
+def fitCircle2D(pts):
+    """Solve for parameters of a 2D circle given pts that lie on the circle perimeter."""
+    N = len(pts)
+
+    # build LSQ model matrix and solve for non-dimensional parameters
+    ym = -np.ones((N, 1))
+    H = [[xi**2 + yi**2, xi, yi] for (xi,yi) in pts]
+    result = np.linalg.lstsq(H, ym, rcond=None)
+    xe = result[0].flatten()
+
+    # extract desired circle parameters
+    pest = [0,0,0]
+    # origin
+    pest[0] = -xe[1] / 2 / xe[0]
+    pest[1] = -xe[2] / 2 / xe[0]
+    # radius
+    rsq = np.sum((pts[0:N,0] - pest[0])**2 + (pts[0:N,1] - pest[1])**2)/N
+    pest[2] = math.sqrt(rsq)
+
+    # return parameters and fit residual for optimization feedback
+    resid = result[1][0]
+    return (pest, resid)
+
+
+
 #Returns point, radius [px, py, pz, r]
 def fitSphereToPoints(pts, seed=np.array([1,1,1,1])):
     return scipy.optimize.minimize(lambda x: np.sum((np.linalg.norm(pts-np.array([x[0], x[1], x[2]]), axis=1)-x[3])**2) , seed , method = "Powell")
@@ -434,7 +565,7 @@ class VertexSelectionInput:
         self.selectionInput.addSelectionFilter('MeshBodies')
         self.selectionInput.setSelectionLimits(0, 1)
 
-        self.floatSpinner = inputs.addFloatSpinnerCommandInput('vertexSelectionRadius', 'Selection Radius', '', 0, 10000, 5, 0.5)
+        self.floatSpinner = inputs.addFloatSpinnerCommandInput('vertexSelectionRadius', 'Selection Radius', '', 0, 10000, 5, 5)
 
         self.boolValue = inputs.addBoolValueInput('vertexSelectionThrough', 'Select Through', True)
         self.boolValue.isEnabled = False
