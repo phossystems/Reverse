@@ -8,11 +8,6 @@ import os
 import sys
 
 
-# Enables experimental features
-DEV = True
-
-
-
 # ============================== Imports NumPy & SciPy  ==============================
 
 
@@ -26,14 +21,20 @@ try:
     import numpy as np
     import scipy
     from scipy import optimize
+    from scipy.spatial import ConvexHull
     import math
 finally:
     del sys.path[-1]
 
 
+# Initial persistence Dict
+pers = {
+    'viExpansion': 0.1,
+    'fsViRadius': 2
+}
+
 
 _handlers = []
-
 
 
 
@@ -50,76 +51,30 @@ _handlers = []
 
 def run(context):
     try:
+        
         app = adsk.core.Application.get()
         ui = app.userInterface
-
-        '''
-        defs = ui.commandDefinitions
-        for i in range(defs.count):
-            print(defs.item(i).id)
-
-        '''
         
         commandDefinitions = ui.commandDefinitions
-
-        tabReverse = ui.allToolbarTabs.itemById("tabReverse")
-        if tabReverse:
-            tabReverse.deleteMe()
-
-        tabReverse = ui.workspaces.itemById("FusionSolidEnvironment").toolbarTabs.add("tabReverse", "Reverse Engineer")
-
-        # Setup
-        panelSetup = ui.allToolbarPanels.itemById("panelReverseSetup")
-        if panelSetup:
-            panelSetup.deleteMe()
-        panelSetup = tabReverse.toolbarPanels.add("panelReverseSetup", "Setup")
-
-        # Create
-        panelCreate = ui.allToolbarPanels.itemById("panelReverseCreate")
-        if panelCreate:
-            panelCreate.deleteMe()
-        panelCreate = tabReverse.toolbarPanels.add("panelReverseCreate", "Create")
-
-        # Insert
-        panelInsert = ui.allToolbarPanels.itemById("panelReverseInsert")
-        if panelInsert:
-            panelInsert.deleteMe()
-        panelInsert = tabReverse.toolbarPanels.add("panelReverseInsert", "Insert")
-
+        #check the command exists or not
+        cmdDefCylinder = commandDefinitions.itemById("commandReverseCylinder")
+        cmdDefPlane = commandDefinitions.itemById("commandReversePlane")
+        if not cmdDefCylinder:
+            cmdDefCylinder = commandDefinitions.addButtonDefinition("commandReverseCylinder", "Cylinder", "Reconstructs a cylindrical face", 'Resources/Cylinder')
+        if not cmdDefPlane:
+            cmdDefPlane = commandDefinitions.addButtonDefinition("commandReversePlane", "Plane", "Reconstructs a planar face", 'Resources/Plane')
+        #Adds the commandDefinition to the toolbar
+        for panel in ["SurfaceCreatePanel"]:
+            ui.allToolbarPanels.itemById(panel).controls.addCommand(cmdDefCylinder)
+            ui.allToolbarPanels.itemById(panel).controls.addCommand(cmdDefPlane)
         
-        # Place Command
-        cmdDef = commandDefinitions.itemById("commandReversePlace")
-        if cmdDef:
-            cmdDef.deleteMe()
-        if(DEV):
-            cmdDef = commandDefinitions.addButtonDefinition("commandReversePlace", "[WIP] Place",
-                                                            "Places Mesh on XY Plane", 'Resources/Placeholder')
+        onCommandCylinderCreated = CommandCylinderCreatedHandler()
+        cmdDefCylinder.commandCreated.add(onCommandCylinderCreated)
+        _handlers.append(onCommandCylinderCreated)
 
-        onCommandCreated = CommandPlaceCreatedHandler()
-        cmdDef.commandCreated.add(onCommandCreated)
-        _handlers.append(onCommandCreated)
-
-        panelSetup.controls.addCommand(cmdDef).isPromoted = True
-
-
-        # Cylinder Command
-        cmdDef = commandDefinitions.itemById("commandReverseCylinder")
-        if cmdDef:
-            cmdDef.deleteMe()
-        if(DEV):
-            cmdDef = commandDefinitions.addButtonDefinition("commandReverseCylinder", "Cylinder",
-                                                            "Reconstructs a cylindrical face", 'Resources/Placeholder')
-
-        onCommandCreated = CommandCylinderCreatedHandler()
-        cmdDef.commandCreated.add(onCommandCreated)
-        _handlers.append(onCommandCreated)
-
-        panelCreate.controls.addCommand(cmdDef).isPromoted = True
-
-        panelInsert.controls.addCommand(ui.commandDefinitions.itemById("InsertMeshCommand")).isPromoted = True
-
-
-
+        onCommandPlaneCreated = CommandPlaneCreatedHandler()
+        cmdDefPlane.commandCreated.add(onCommandPlaneCreated)
+        _handlers.append(onCommandPlaneCreated)
     except:
         print(traceback.format_exc())
 
@@ -128,6 +83,19 @@ def stop(context):
     try:
         app = adsk.core.Application.get()
         ui = app.userInterface
+                
+        #Removes the commandDefinition from the toolbar
+        for panel in ["SurfaceCreatePanel"]:
+            p = ui.allToolbarPanels.itemById(panel).controls.itemById("commandReverseCylinder")
+            if p:
+                p.deleteMe()
+            p = ui.allToolbarPanels.itemById(panel).controls.itemById("commandReversePlane")
+            if p:
+                p.deleteMe()
+        
+        #Deletes the commandDefinition
+        ui.commandDefinitions.itemById("commandReverseCylinder").deleteMe()
+        ui.commandDefinitions.itemById("commandReversePlane").deleteMe()            
     except:
         print(traceback.format_exc())
 
@@ -139,14 +107,13 @@ def stop(context):
 
 
 
-
-# ============================== Place command ==============================
+# ============================== Plane command ==============================
 
 
 # Fires when the CommandDefinition gets executed.
 # Responsible for adding commandInputs to the command &
 # registering the other command handlers.
-class CommandPlaceCreatedHandler(adsk.core.CommandCreatedEventHandler):
+class CommandPlaneCreatedHandler(adsk.core.CommandCreatedEventHandler):
     def __init__(self):
         super().__init__()
     def notify(self, args):
@@ -157,10 +124,24 @@ class CommandPlaceCreatedHandler(adsk.core.CommandCreatedEventHandler):
             #import .commands.VertexSelectionInput
             vsi = VertexSelectionInput(args)
 
-            # Registers the CommandDestryHandler
-            onExecute = CommandPlaceExecuteHandler(vsi)
+            # Registers the CommandExecuteHandler
+            onExecute = CommandPlaneExecuteHandler(vsi)
             cmd.execute.add(onExecute)
             _handlers.append(onExecute)  
+
+            # Registers the CommandDestryHandler
+            onExecutePreview = CommandPlaneExecutePreviewHandler(vsi)
+            cmd.executePreview.add(onExecutePreview)
+            _handlers.append(onExecutePreview)
+
+            # Registers the CommandInputChangedHandler          
+            onInputChanged = CommandPlaneInputChangedHandler()
+            cmd.inputChanged.add(onInputChanged)
+            _handlers.append(onInputChanged) 
+
+            global pers
+
+            viExpansion = cmd.commandInputs.addValueInput("viExpansion", "Expansion", "mm", adsk.core.ValueInput.createByReal(pers["viExpansion"]))
 
         except:
             print(traceback.format_exc())
@@ -168,41 +149,161 @@ class CommandPlaceCreatedHandler(adsk.core.CommandCreatedEventHandler):
 
 #Fires when the User executes the Command
 #Responsible for doing the changes to the document
-class CommandPlaceExecuteHandler(adsk.core.CommandEventHandler):
+# Almost identical to the ExecutePreviewEventHandler, but that one also adds custom graphics.
+# There are better ways to do this, this is sutpid
+class CommandPlaneExecuteHandler(adsk.core.CommandEventHandler):
     def __init__(self, vsi):
         self.vsi = vsi
         super().__init__()
     def notify(self, args):
         try:
-            if self.vsi.selected_points:
-                
+            if self.vsi.selected_points and len(self.vsi.selected_points) >= 3:
                 # Gets actual coordinates from selected indexes
                 crds = self.vsi.mesh_points[ list(self.vsi.selected_points) ]
 
                 # Fits a plane to the set of coordinates
                 # result contains metadata res.x is actual result
-                res = fitPlaneToPoints( crds , seed=np.concatenate((crds[0], np.cross(crds[0]-crds[-1], crds[1]-crds[-1]) )))
+                avgCrds = np.average(crds, axis=0)
+                res = fitPlaneToPoints2(crds)
 
-                print(res)
+                # Rejects bad results (by looking for extreme values)
+                if(max(res.x) > 100000 or min(res.x) < -100000):
+                    return
+                
+                #Normalized Normal Vector
+                n = np.array(sphericalToDirection(res.x[:2]))
+
+                #Origin Vector
+                o = np.array(sphericalToDirection(res.x[:2])) * res.x[2]
 
                 app = adsk.core.Application.get()
                 des = app.activeProduct
                 root = des.rootComponent
                 bodies = root.bRepBodies
 
-                des.designType = 0
+                # Creates a base feature when in parametric design mode
+                if des.designType:
+                    baseFeature = root.features.baseFeatures.add()
+                    baseFeature.startEdit()
+                else:
+                    baseFeature = None
                 
-                bodies = adsk.core.ObjectCollection.create()
-                bodies.add(self.vsi.selectionInput.selection(0).entity)
+                # Gets the TemporaryBRepManager
+                tbm = adsk.fusion.TemporaryBRepManager.get()
 
-                transform = adsk.core.Matrix3D.create()
-                transform.setToRotateTo(adsk.core.Vector3D.create(0,0,1), adsk.core.Vector3D.create(res.x[3], res.x[4], res.x[5]) )
+                # Computes the convex hull and turns it into Line3D objects
+                hullLines = [adsk.core.Line3D.create(point3d(i[0]), point3d(i[1])) for i in getConvexHull(crds, res.x)]
 
-                # Create a move feature
-                moveFeats = root.features.moveFeatures
-                moveFeatureInput = moveFeats.createInput(bodies, transform)
-                moveFeats.add(moveFeatureInput)
-            
+                # Constructs a BRepWire inside a BRepBody from the hull lines
+                wireBody, _ = tbm.createWireFromCurves(hullLines)
+                
+                # Computes the normal of the resulting surface. This is not n as the direction the resulting face is facing is essentially random
+                tempSurface = tbm.createFaceFromPlanarWires([wireBody])
+                _, faceNormal = tempSurface.faces[0].evaluator.getNormalAtParameter(adsk.core.Point2D.create(0,0))
+
+                # offsets the BRepWire for expansion
+                offsetWireBody = wireBody.wires[0].offsetPlanarWire(
+                    faceNormal,
+                    args.command.commandInputs.itemById("viExpansion").value,
+                    2
+                )
+
+                # creates the actual face
+                surface = tbm.createFaceFromPlanarWires([offsetWireBody])
+                
+                # Adds face and optionally finishes the baseFeature
+                if(baseFeature):
+                    realSurface = bodies.add(surface, baseFeature)
+                    baseFeature.finishEdit()
+                else:
+                    realSurface = bodies.add(surface)
+        except:
+            print(traceback.format_exc())
+
+
+#Fires when the User executes the Command
+#Responsible for doing the changes to the document
+class CommandPlaneExecutePreviewHandler(adsk.core.CommandEventHandler):
+    def __init__(self, vsi):
+        self.vsi = vsi
+        super().__init__()
+    def notify(self, args):
+        try:
+            if self.vsi.selected_points and len(self.vsi.selected_points) >= 3:
+                
+                # Gets actual coordinates from selected indexes
+                crds = self.vsi.mesh_points[ list(self.vsi.selected_points) ]
+
+                # Fits a plane to the set of coordinates
+                # result contains metadata res.x is actual result
+                avgCrds = np.average(crds, axis=0)
+                res = fitPlaneToPoints2(crds)
+
+                # Rejects bad results (by looking for extreme values)
+                if(max(res.x) > 100000 or min(res.x) < -100000):
+                    return
+                
+                #Normalized Normal Vector
+                n = np.array(sphericalToDirection(res.x[:2]))
+
+                #Origin Vector
+                o = np.array(sphericalToDirection(res.x[:2])) * res.x[2]
+
+                app = adsk.core.Application.get()
+                des = app.activeProduct
+                root = des.rootComponent
+                bodies = root.bRepBodies
+
+                # Creates a base feature when in parametric design mode
+                if des.designType:
+                    baseFeature = root.features.baseFeatures.add()
+                    baseFeature.startEdit()
+                else:
+                    baseFeature = None
+                
+                # Gets the TemporaryBRepManager
+                tbm = adsk.fusion.TemporaryBRepManager.get()
+
+                # Computes the convex hull and turns it into Line3D objects
+                hullLines = [adsk.core.Line3D.create(point3d(i[0]), point3d(i[1])) for i in getConvexHull(crds, res.x)]
+
+                # Constructs a BRepWire inside a BRepBody from the hull lines
+                wireBody, _ = tbm.createWireFromCurves(hullLines)
+                
+                
+                offsetWireBody = wireBody.wires[0].offsetPlanarWire(
+                    vector3d(n),
+                    -args.command.commandInputs.itemById("viExpansion").value,
+                    2
+                )
+                
+                # creates the actual face
+                surface = tbm.createFaceFromPlanarWires([offsetWireBody])
+
+                # Adds face and optionally finishes the baseFeature
+                if(baseFeature):
+                    realSurface = bodies.add(surface, baseFeature)
+                    realSurface.opacity = 0.7
+                    baseFeature.finishEdit()
+                else:
+                    realSurface = bodies.add(surface)
+                    realSurface.opacity = 0.7
+
+                args.isValidResult = False  
+        except:
+            print(traceback.format_exc())
+
+
+# Fires when CommandInputs are changed
+# Responsible for dynamically updating other Command Inputs
+class CommandPlaneInputChangedHandler(adsk.core.InputChangedEventHandler):
+    def __init__(self):
+        super().__init__()
+    def notify(self, args):
+        try:
+            global pers
+            if args.input.id == "viExpansion":
+                pers["viExpansion"] = args.input.value
         except:
             print(traceback.format_exc())
 
@@ -232,10 +333,24 @@ class CommandCylinderCreatedHandler(adsk.core.CommandCreatedEventHandler):
             #import .commands.VertexSelectionInput
             vsi = VertexSelectionInput(args)
 
-            # Registers the CommandDestryHandler
+            # Registers the CommandExecuteHandler
             onExecute = CommandCylinderExecuteHandler(vsi)
             cmd.execute.add(onExecute)
             _handlers.append(onExecute)  
+
+            # Registers the CommandDestryHandler
+            onExecutePreview = CommandCylinderExecutePreviewHandler(vsi)
+            cmd.executePreview.add(onExecutePreview)
+            _handlers.append(onExecutePreview)
+
+            # Registers the CommandInputChangedHandler          
+            onInputChanged = CommandCylinderInputChangedHandler()
+            cmd.inputChanged.add(onInputChanged)
+            _handlers.append(onInputChanged) 
+
+            global pers
+
+            viExpansion = cmd.commandInputs.addValueInput("viExpansion", "Expansion", "mm", adsk.core.ValueInput.createByReal(pers["viExpansion"]))
 
         except:
             print(traceback.format_exc())
@@ -243,6 +358,8 @@ class CommandCylinderCreatedHandler(adsk.core.CommandCreatedEventHandler):
 
 #Fires when the User executes the Command
 #Responsible for doing the changes to the document
+# Almost identical to the ExecutePreviewEventHandler, but that one also adds custom graphics.
+# There are better ways to do this, this is sutpid
 class CommandCylinderExecuteHandler(adsk.core.CommandEventHandler):
     def __init__(self, vsi):
         self.vsi = vsi
@@ -250,121 +367,171 @@ class CommandCylinderExecuteHandler(adsk.core.CommandEventHandler):
     def notify(self, args):
         try:
             if self.vsi.selected_points:
-                
-                # Gets actual coordinates from selected indexes
-                crds = self.vsi.mesh_points[ list(self.vsi.selected_points) ]
-
-                # Fits a plane to the set of coordinates
-                # result contains metadata res.x is actual result
-                # avgCrds = np.average(crds, axis=0)
-                # res = fitCylinderToPonts(crds, seed = np.array([avgCrds[0], avgCrds[1], avgCrds[2], 1, 1, 1, 2.5]))
-                res = fitCylinderToPoints(crds)
-
-                if(DEV):
-                    print(res)
-                
-                # Bounds of cylinder as scalar
-                bounds = cylinderBounds(crds, np.array(res.x[0:3]), np.array(res.x[3:6]))
-
-                #Origin Vector
-                o = np.array(res.x[0:3])
-
-                #Normalized Normal Vector
-                n = np.array(res.x[3:6]) / np.linalg.norm(np.array(res.x[3:6]))
-
-                # Start and End Points
-                p1 = o + n * bounds[0]
-                p2 = o + n * bounds[1]
-
-                app = adsk.core.Application.get()
-                des = app.activeProduct
-                root = des.rootComponent
-                bodies = root.bRepBodies
-
-                des.designType = 0
-                
-                tbm = adsk.fusion.TemporaryBRepManager.get()
-
-                tempBRepBodies = []
-
-                cylinder = tbm.createCylinderOrCone(adsk.core.Point3D.create(p2[0], p2[1], p2[2]),
-                                            res.x[6],
-                                            adsk.core.Point3D.create(p1[0], p1[1], p1[2]),
-                                            res.x[6])
-                tempBRepBodies.append(cylinder)
-
-                for b in tempBRepBodies:
-                    bodies.add(b)
-                
-                
-            
+                cylinderExecuteStuff(self, args)
         except:
             print(traceback.format_exc())
 
 
+#Fires when the User executes the Command
+#Responsible for doing the changes to the document
+class CommandCylinderExecutePreviewHandler(adsk.core.CommandEventHandler):
+    def __init__(self, vsi):
+        self.vsi = vsi
+        super().__init__()
+    def notify(self, args):
+        try:
+            if self.vsi.selected_points:
+                cylinderExecuteStuff(self, args).opacity = 0.7
+                args.isValidResult = False
+        except:
+            print(traceback.format_exc())
 
 
-                
-                
-                
+# Fires when CommandInputs are changed
+# Responsible for dynamically updating other Command Inputs
+class CommandCylinderInputChangedHandler(adsk.core.InputChangedEventHandler):
+    def __init__(self):
+        super().__init__()
+    def notify(self, args):
+        try:
+            global pers
+            if args.input.id == "viExpansion":
+                pers["viExpansion"] = args.input.value
+        except:
+            print(traceback.format_exc())
+
+
+def cylinderExecuteStuff(handler, args):            
+    # Gets actual coordinates from selected indexes
+    crds = handler.vsi.mesh_points[ list(handler.vsi.selected_points) ]
+
+    # Fits a plane to the set of coordinates
+    # result contains metadata res.x is actual result
+    # avgCrds = np.average(crds, axis=0)
+    try:
+        res = fitCylinderToPoints(crds)
+    except:
+        return
+
+    # Rejects bad results (by looking for extreme values)
+    if(max(res.x) > 100000 or min(res.x) < -100000):
+        return
+    
+    # Bounds of cylinder as scalar
+    bounds = cylinderBounds(crds, np.array(res.x[0:3]), np.array(res.x[3:6]))
+
+    #Origin Vector
+    o = np.array(res.x[0:3])
+
+    #Normalized Normal Vector
+    n = np.array(res.x[3:6]) / np.linalg.norm(np.array(res.x[3:6]))
+
+    # Start and End Points
+    p1 = o + n * bounds[0]
+    p2 = o + n * bounds[1]
+
+    app = adsk.core.Application.get()
+    des = app.activeProduct
+    root = des.rootComponent
+    bodies = root.bRepBodies
+
+    if des.designType:
+        baseFeature = root.features.baseFeatures.add()
+        baseFeature.startEdit()
+    else:
+        baseFeature = None
+    
+    tbm = adsk.fusion.TemporaryBRepManager.get()
+
+    tempBRepBodies = []
+
+    circle1 = adsk.core.Circle3D.createByCenter(
+        point3d(p1 - n * args.command.commandInputs.itemById("viExpansion").value),
+        vector3d(n),
+        res.x[6]
+        )
+
+    circle2 = adsk.core.Circle3D.createByCenter(
+        point3d(p2 + n * args.command.commandInputs.itemById("viExpansion").value),
+        vector3d(n),
+        res.x[6]
+        )
+
+    wireBody1, _ = tbm.createWireFromCurves([circle1])
+    wireBody2, _ = tbm.createWireFromCurves([circle2])
+
+    surface = tbm.createRuledSurface(wireBody1.wires.item(0), wireBody2.wires.item(0))
+    
+    if(baseFeature):
+        realSurface = bodies.add(surface, baseFeature)
+        baseFeature.finishEdit()
+    else:
+        realSurface = bodies.add(surface)
+
+    return realSurface
+
+      
+
+
+
+
+
 
 
 
 
 # p = Point a,b = Line
 def distPtToLine(p, a, b):
+    """Gets the distance between an array of points and a line
+
+    Parameters
+    ----------
+    pts : List or np array of shape (-1, 3)
+        List of points on the cylindrical surface
+    a : List or np array of shape (3)
+        a point on the line
+    b : List or np array of shape (3)
+        another point on the line
+
+    Returns
+    -------
+    np array of shape (-1)
+        array of distances for each point to the line
+    """
     return np.linalg.norm( np.cross(b-a, a-p), axis=1) / np.linalg.norm(b-a)
 
 
-# p = Point o = Plane Origin n = Plane normal
 def distPtToPlane(p, o, n):
+    """Gets the distance between an array of points and a plane
+
+    Parameters
+    ----------
+    pts : List or np array of shape (-1, 3)
+        List of points on the cylindrical surface
+    o : List or np array of shape (3)
+        Vector to origin of cylinder
+    n : List or np array of shape (3)
+        Normal vector of cylinder
+
+    Returns
+    -------
+    np array of shape (-1)
+        array of distances for each point to the plane
+    """
     return np.dot( (p-o), n ) / np.linalg.norm(n)
 
 
-def isPointInvisiblePerspecive(points, cameraPos, tris):
-    return [np.any( doesLineIntersectTriangle(np.repeat(np.array([[p, cameraPos]]), len(tris), axis=0) , tris) ) for p in points]
-
-
-#Tales Array of lines (-1,2,3) and array of triangles and checks for intersection line by line
-def doesLineIntersectTriangle(line, triangle):
-    
-    a = np.sign( spv(line[:,0], line[:,1], triangle[:,0], triangle[:,1]) )
-    b = np.sign( spv(line[:,0], line[:,1], triangle[:,1], triangle[:,2]) )
-    c = np.sign( spv(line[:,0], line[:,1], triangle[:,2], triangle[:,0]) )
-
-    return np.logical_and(np.not_equal(np.sign(spv(line[:,0], triangle[:,0], triangle[:,1], triangle[:,2]) ), np.sign(spv(line[:,1], triangle[:,0], triangle[:,1], triangle[:,2]) )), np.logical_and(np.equal(a, b), np.equal(b, c)))
-            
-
-#Signed volume of a Parallelepiped, equal to 6 times the signed volume of a tetrahedron
-def spv(a, b, c, d):
-    #Einsum seems to be used for row-wise dot products
-    return np.einsum('ij,ij->i', d-a, np.cross(b-a, c-a))
-
-
-#Returns point and vector [px, py, pz, vx, vy, vz]
-def fitLineToPoints(pts, seed=np.array([1,1,1,1,1,1])):
-    return scipy.optimize.minimize(lambda x: np.sum(distPtToLine(pts, np.array([x[0], x[1], x[2]]), np.array([x[0] + x[3], x[1] + x[4], x[2]+ x[5]]))**2), seed , method = 'Powell')
-    
-
-def fitPlaneToPoints(pts, seed=np.array([1,1,1,1,1,1])):
-    return scipy.optimize.minimize(lambda x: np.sum(
-
-        distPtToPlane(pts, np.array([x[0], x[1], x[2]]), np.array([x[3], x[4], x[5]]))**2
-        
-        ), seed , method = 'Powell')
-
-#Returns point, vector and radius [px, py, pz, vx, vy, vz, r]
-def fitCylinderToPonts(pts, seed=np.array([1,1,1,1,1,1,1])):
-    return scipy.optimize.minimize(lambda x: np.sum((distPtToLine(pts, np.array([x[0], x[1], x[2]]), np.array([x[0] + x[3], x[1] + x[4], x[2]+ x[5]]))-x[6])**2) , seed , method = "Powell")
-  
-
-# Generates a 3D unit vector given two spherical angles
-#  Inputs:
-#    ang: an array containing a (polar) angle from the Z axis and an (azimuth) angle in the X-Y plane from the X axis, in radians
-#  Outputs:
-#    a 3D unit vector defined by the input angles (input = [0,0] -> output = [0,0,1])
 def sphericalToDirection(ang):
-    """Construct a unit vector from spherical coordinates."""
+    """Generates a 3D unit vector given two spherical angles
+
+    Parameters
+    ----------
+        ang : an array containing a (polar) angle from the Z axis and an (azimuth) angle in the X-Y plane from the X axis, in radians
+
+    Returns
+    -------
+    a 3D unit vector defined by the input angles (input = [0,0] -> output = [0,0,1])
+    """
     return [math.cos(ang[0]) * math.sin(ang[1]), math.sin(ang[0]) * math.sin(ang[1]), math.cos(ang[1])]
 
 # Simple solution definiton
@@ -372,24 +539,33 @@ class Soln():
     pass
 
 
-# Solves for the parameters of an infinite cylinder given a set of 3D cartesian points
-#  Inputs:
-#    pts: a Nx3 array of points on the cylinder, ideally well-distributed radially with some axial variation
-#  Outputs a solution object containing members:
-#    x: estimated cylinder origin, axis, and radius parameters [ px, py, pz, ax, ay, az, r ]
-#    fun: non-dimensional residual of the fit to be used as a quality metric
-#  Method:
-#  - The general approach is a hybrid search where several parameters are handled using iterative optimization and the rest are directly solved for
-#  - The outer search is performed over possible cylinder orientations (represented by two angles)
-#    - A huge advantage is that these parameters are bounded, making search space coverage tractable despite the multiple local minima
-#    - Reducing the iterative search space to two parameters dramatically helps iteration time as well
-#    - To help ensure the global minimum is found, a coarse grid method is used over the bounded parameters
-#    - A gradient method is used to refine the found coarse global minimum
-#  - For each orientation, a direct (ie, non-iterative) LSQ solution is used for the other 3 paremeters
-#    - This can be visualized as checking how "circular" the set of points appears when looking along the expected axis of the cylinder
-#  - Note that no initial guess is needed since whole orientation is grid-searched and the other parameters are found directly without iteration
 def fitCylinderToPoints(pts):
-    """Solve for 3D parameters of an infinite cylinder given pts that lie on the cylinder surface."""
+    """Solves for the parameters of an infinite cylinder given a set of 3D cartesian points
+
+    Parameters
+    ----------
+        pts: a Nx3 array of points on the cylinder, ideally well-distributed radially with some axial variation
+
+    Returns
+    -------
+    Outputs a solution object containing members:
+        x: estimated cylinder origin, axis, and radius parameters [ px, py, pz, ax, ay, az, r ]
+        fun: non-dimensional residual of the fit to be used as a quality metric
+
+    Note
+    -------
+    - The general approach is a hybrid search where several parameters are handled using iterative optimization and the rest are directly solved for
+    - The outer search is performed over possible cylinder orientations (represented by two angles)
+        - A huge advantage is that these parameters are bounded, making search space coverage tractable despite the multiple local minima
+        - Reducing the iterative search space to two parameters dramatically helps iteration time as well
+        - To help ensure the global minimum is found, a coarse grid method is used over the bounded parameters
+        - A gradient method is used to refine the found coarse global minimum
+    - For each orientation, a direct (ie, non-iterative) LSQ solution is used for the other 3 paremeters
+        - This can be visualized as checking how "circular" the set of points appears when looking along the expected axis of the cylinder
+    - Note that no initial guess is needed since whole orientation is grid-searched and the other parameters are found directly without iteration
+    """
+
+
     # Create search grid for orientation angles
     # (note, may need to increase number of grid points in cases of poorly defined point sets)
     ranges = (slice(0, 2*math.pi, math.pi/4), slice(0, math.pi, math.pi/4))
@@ -413,22 +589,29 @@ def fitCylinderToPoints(pts):
     return res
 
 
-# Solves for some parameters of an infinite cylinder given a set of 3D cartesian points and an axis for the cylinder
-#  Inputs:
-#    pts: a Nx3 array of points on the cylinder, ideally well-distributed radially with some axial variation
-#    axis: a vector containing the central axis direction of the cylinder
-#  Outputs a tuple containing:
-#    pest: estimated cylinder origin and radius parameters [ px, py, pz, r ]
-#    resid: non-dimensional residual of the fit to be used as a quality metric
-#  Method:
-#    - Generates a set of orthonormal basis vectors based on the input cylinder axis
-#    - Forms a direction cosine matrix from the basis vectors and rotates the points into the cylinder frame
-#    - Collapses the points along the cylinder axis and runs 2D circle estimation to get the lateral offset and radius
-#    - Along-axis offset is meaningless for an infinite cylinder, so the mean of the input points in that direction is arbitrarily used
-#    - Maps the offsets back to the original coordinate system
-#    - Note that the returned residual is the 2D circular fit metric
 def fitCylinderOnAxis(pts, axis=np.array([0,0,1])):
-    """Solve for offset and radius parameters of a cylinder given its central axis and pts that lie on the cylinder surface."""
+    """Solves for some parameters of an infinite cylinder given a set of 3D cartesian points and an axis for the cylinder
+
+    Parameters
+    ----------
+        pts: a Nx3 array of points on the cylinder, ideally well-distributed radially with some axial variation
+        axis: a vector containing the central axis direction of the cylinder
+
+    Returns
+    -------
+    Outputs a tuple containing:
+        pest: estimated cylinder origin and radius parameters [ px, py, pz, r ]
+        resid: non-dimensional residual of the fit to be used as a quality metric
+
+    Note
+    -------
+    - Generates a set of orthonormal basis vectors based on the input cylinder axis
+    - Forms a direction cosine matrix from the basis vectors and rotates the points into the cylinder frame
+    - Collapses the points along the cylinder axis and runs 2D circle estimation to get the lateral offset and radius
+    - Along-axis offset is meaningless for an infinite cylinder, so the mean of the input points in that direction is arbitrarily used
+    - Maps the offsets back to the original coordinate system
+    - Note that the returned residual is the 2D circular fit metric
+    """
     # Create basis vectors for transformed coordinate system
     w = axis
     u = np.cross(w,np.array([w[1],w[2],w[0]]))
@@ -454,17 +637,24 @@ def fitCylinderOnAxis(pts, axis=np.array([0,0,1])):
     return (pest, resid)
 
 
-# Solves for the 2D parameters of a circle given a set of 2D (x,y) points
-#  Inputs:
-#    pts: a Nx3 array of points on the cylinder, 3 points minimum, ideally well-distributed
-#  Outputs a tuple containing:
-#    pest: estimated 2D parameters [ px, py, r ]
-#    resid: non-dimensional residual of the fit to be used as a quality metric
-#  Method:
-#    - Reparameterizes the problem into a nondimensional linear form through a change of variables
-#    - 2D parameters are solved for directly using linear least squares rather than an iterative method
 def fitCircle2D(pts):
-    """Solve for parameters of a 2D circle given pts that lie on the circle perimeter."""
+    """Solve for parameters of a 2D circle given pts that lie on the circle perimeter.
+    
+    Parameters
+    ----------
+    pts : a Nx3 array of points on the cylinder, 3 points minimum, ideally well-distributed
+
+    Returns
+    -------
+    Outputs a tuple containing:
+        pest: estimated 2D parameters [ px, py, r ]
+        resid: non-dimensional residual of the fit to be used as a quality metric
+
+    Note
+    -------
+    - Reparameterizes the problem into a nondimensional linear form through a change of variables
+    - 2D parameters are solved for directly using linear least squares rather than an iterative method
+    """
     N = len(pts)
 
     # build LSQ model matrix and solve for non-dimensional parameters
@@ -487,41 +677,263 @@ def fitCircle2D(pts):
     return (pest, resid)
 
 
+def fitPlaneToPoints2(pts):
+    """Solve for 3D parameters of an infinite plane given pts that lie on the plane surface.
+    
+    Parameters
+    ----------
+    pts : List or np array of shape (-1, 3)
+        List of points
 
-#Returns point, radius [px, py, pz, r]
-def fitSphereToPoints(pts, seed=np.array([1,1,1,1])):
-    return scipy.optimize.minimize(lambda x: np.sum((np.linalg.norm(pts-np.array([x[0], x[1], x[2]]), axis=1)-x[3])**2) , seed , method = "Powell")
-  
+    Returns
+    -------
+    list of shape (2)
+        Soln object containing
+            x : list of shape (3)
+                [angle1, angle2, z-offset]
+            fun : number
+                remaining error function (distance squared)
+    """
+    # Create search grid for orientation angles
+    # (note, may need to increase number of grid points in cases of poorly defined point sets)
+    ranges = (slice(0, 2*math.pi, math.pi/4), slice(0, math.pi, math.pi/4))
+
+    # Perform brute force grid search for approximate global minimum location followed by iterative fine convergence
+    # (note, this can probably be replaced with a different global search method, ie simulated annealing, 
+    #   but the grid search should work reasonably well given that the search space is bounded)
+    sol = scipy.optimize.brute(lambda x: fitPlaneOnAxis(pts, sphericalToDirection(x))[1], ranges, finish=scipy.optimize.fmin)
+
+    result = fitPlaneOnAxis(pts, sphericalToDirection(sol))
+
+    # Mimic return elements in scipy.optimize.minimize functions
+    res = Soln()
+    setattr(res, 'x', [sol[0], sol[1], result[0]])
+    setattr(res, 'fun', result[1])
+    return res
+
+
+def fitPlaneOnAxis(pts, pln=np.array([0,0,1])):
+    """Solve for offset parameters of a plane given its normal and pts that lie on the plane surface.
+
+    Parameters
+    ----------
+    pts : List or np array of shape (-1, 3)
+        List of points
+    pln : List or np array of shape (3)
+        Plane normal vector
+
+    Returns
+    -------
+    list of shape (2)
+        [z-offset, distance_squared_error]
+    """
+    # Create basis vectors for transformed coordinate system
+    w = pln
+    u = np.cross(w,np.array([w[1],w[2],w[0]]))
+    u = u / np.linalg.norm(u)
+    v = np.cross(w,u)
+    
+    # Construct DCM and rotate points into plane frame
+    C = np.array([u, v, w]).transpose()
+    pts3d = np.array(pts)
+    N = len(pts3d)
+    pts3drot = pts3d.dot(C)
+
+    z = pts3drot[:, 2]
+
+    zo = np.average(z)
+
+    return (zo, np.sum((z-zo)**2))
+
+
+def getConvexHull(pts, pln):
+    """Gets the 2D ConvexHull of a set of 3D points projected onto a plane and makes them coplanar
+
+    Parameters
+    ----------
+    pts : List or np array of shape (-1, 3)
+        List of points
+    pln : List or np array of shape (3)
+        Plane normal vector
+
+    Returns
+    -------
+    list of shape (-1, 2, 3)
+        -1 line segments, [startPoint, endPoint], [x, y, z]
+    """
+    # Create basis vectors for transformed coordinate system
+    w = sphericalToDirection(pln)
+    u = np.cross(w,np.array([w[1],w[2],w[0]]))
+    u = u / np.linalg.norm(u)
+    v = np.cross(w,u)
+
+    # Construct DCM and rotate points into plane frame
+    C = np.array([u, v, w]).transpose()
+    pts3d = np.array(pts)
+    pts3drot = pts3d.dot(C)
+
+    # Computes convex hull on xy of points
+    hull = ConvexHull(pts3drot[:,:2])
+
+    # Sorts indices
+    hullIndices = sortSimplex2D(hull.simplices.tolist())
+    
+    # Makes all points coplanar
+    pts3drot[:, 2] = np.average(pts3drot[:, 2])
+
+    # Makes loop clockwise
+    if not isLoopClockwise([pts3drot[i] for i in hullIndices]):
+        for i in hullIndices:
+            i.reverse()
+        hullIndices.reverse()
+
+    # Rotates points back into oritignal frame
+    Ci = np.linalg.inv(C)
+    pts3dflat = pts3drot.dot(Ci)
+    return np.array([pts3dflat[i] for i in hullIndices])
+
+
+def sortSimplex2D(x):
+    """Orders a list of line segments to align end to end
+
+    Parameters
+    ----------
+    x : List of shape (-1, 2)
+        -1 number of line segments, [startPointIndex, endPointIndex]
+
+    Returns
+    -------
+    list of shape (-1, 2)
+    """
+    # Go through elements one by one
+    for i in range(len(x)-1):
+        # Look for the end index of the current elements in the remaining elements
+        for j in range(i+1, len(x)):
+            # If the end index is found as the start index of another element move it after the cureent element
+            if x[j][0] == x[i][1]:
+                x.insert(i+1, x.pop(j))
+                break
+            # If the end index is found as the end index of another element flip it and move it after the cureent element
+            if x[j][1] == x[i][1]:
+                x[j].reverse()
+                x.insert(i+1, x.pop(j))
+                break
+    return x
+
+
+def isLoopClockwise(loop):
+    """Gets if a loop of line segments is clockwise
+
+    Parameters
+    ----------
+    loop : List or np array of shape (-1, 2, 2)
+        -1 number of line segments, [startPoint, endPoint], [x,y]
+
+    Returns
+    -------
+    bool
+
+    Note
+    -------
+    https://stackoverflow.com/questions/1165647/how-to-determine-if-a-list-of-polygon-points-are-in-clockwise-order
+    """
+    s = 0
+    for i in loop:
+        s += (i[1][0] - i[0][0]) * (i[1][1] + i[0][1])
+    return s > 0
+
 
 def cylinderBounds(pts, o, n):
+    """Gets bounds of cylinder along its normal
+
+    Parameters
+    ----------
+    pts : List or np array of shape (-1, 3)
+        List of points on the cylindrical surface
+    o : List or np array of shape (3)
+        Vector to origin of cylinder
+    n : List or np array of shape (3)
+        Normal vector of cylinder
+
+    Returns
+    -------
+    np array of shape (2) [min, max]
+        array containing the miniumum and maximum extend of the cylinder along its normal
+    """
     d = distPtToPlane(pts, o, n)
     return np.array([min(d), max(d)])
 
 
 def GetRootMatrix(comp):
-    comp = adsk.fusion.Component.cast(comp)
-    des = adsk.fusion.Design.cast(comp.parentDesign)
-    root = des.rootComponent
+    """Gets the transformation matrix to tranform coordinates from component space to root space
 
+    Parameters
+    ----------
+    comp : Component
+
+    Returns
+    -------
+    adsk.core.Matrix3D
+    """
+    
+    # Gets the root component 
+    root = comp.parentDesign.rootComponent
+
+    # Creates an emty matrix
     mat = adsk.core.Matrix3D.create()
   
+    # If the component is the root component, return the emty matrix
     if comp == root:
         return mat
 
+    # If there is no occurrence of the component, return the emty matrix
     occs = root.allOccurrencesByComponent(comp)
     if len(occs) < 1:
         return mat
 
+    # Take the first occurence
     occ = occs[0]
+    # Split its path
     occ_names = occ.fullPathName.split('+')
-    occs = [root.allOccurrences.itemByName(name) 
-                for name in occ_names]
+    # Get all occurences in the path
+    occs = [root.allOccurrences.itemByName(name)for name in occ_names]
+    # Get their transforms
     mat3ds = [occ.transform for occ in occs]
+    # Reverse the order (importnat for some reason)
     mat3ds.reverse() #important!!
+    # Transform the emty matrix by all of them
     for mat3d in mat3ds:
         mat.transformBy(mat3d)
-
+    # Return the finished matrix
     return mat
+
+
+def point3d(p):
+    """Converts list of np array to fusion360 point3d object
+
+    Parameters
+    ----------
+    p : List or np array of shape (3)
+
+    Returns
+    -------
+    adsk.core.Point3D
+    """
+    return adsk.core.Point3D.create(p[0], p[1], p[2])
+
+
+def vector3d(v):
+    """Converts list of np array to fusion360 vector3d object
+
+    Parameters
+    ----------
+    v : List or np array of shape (3)
+
+    Returns
+    -------
+    adsk.core.Vector3D
+    """
+    return adsk.core.Vector3D.create(v[0], v[1], v[2])
 
 
 
@@ -543,7 +955,6 @@ class VertexSelectionInput:
 
 
     def __init__(self, args):
-        print("init")
         self.selected_points = set()
         
         cmd = args.command
@@ -561,16 +972,15 @@ class VertexSelectionInput:
         cmd.executePreview.add(onExecutePreview)
         self.handlers.append(onExecutePreview)
 
-        self.selectionInput = inputs.addSelectionInput('vertexSelectionMesh', 'Mesh', 'Select Mesh')
-        self.selectionInput.addSelectionFilter('MeshBodies')
-        self.selectionInput.setSelectionLimits(0, 1)
+        self.siMesh = inputs.addSelectionInput('siViMesh', 'Mesh', 'Select Mesh')
+        self.siMesh.addSelectionFilter('MeshBodies')
+        self.siMesh.setSelectionLimits(0, 1)
 
-        self.floatSpinner = inputs.addFloatSpinnerCommandInput('vertexSelectionRadius', 'Selection Radius', '', 0, 10000, 5, 5)
+        global pars
+        self.fsRadius = inputs.addFloatSpinnerCommandInput('fsViRadius', 'Selection Radius', '', 0, 10000, 5, pers['fsViRadius'])
 
-        self.boolValue = inputs.addBoolValueInput('vertexSelectionThrough', 'Select Through', True)
-        self.boolValue.isEnabled = False
-        self.boolValue.value = True
-        self.boolValue.tooltip = "Placeholder, Disabled due to performance issues"
+        self.tbSelected = inputs.addTextBoxCommandInput("tbViSelected", "", "0 Selected", 1, True)
+        self.tbSelected.isFullWidth = False
 
 
     class VertexSelectionClickEventHandler(adsk.core.MouseEventHandler):
@@ -580,35 +990,36 @@ class VertexSelectionInput:
 
         def notify(self, args):
             try:    
+                print("click")
                 if self.parent.mesh_points is not None:
-                    isPerspective = args.viewport.camera.cameraType == 1
-
+                    # Gets the click & camera position in model space 
                     clickPos3D = np.array(args.viewport.viewToModelSpace(args.viewportPosition).asArray())
                     cameraPos = np.array(args.viewport.camera.eye.asArray())
 
-                    app = adsk.core.Application.get()
-                    design = app.activeProduct
-                    rootComp = design.rootComponent
+                    # Checks if camera is in perspective mode
+                    if args.viewport.camera.cameraType:
+                        # Gets the distance of points to camera click line                      
+                        d = distPtToLine(self.parent.mesh_points, clickPos3D, cameraPos)
+                    
+                    else:
+                        centerPos = np.array(args.viewport.viewToModelSpace(adsk.core.Point2D.create(args.viewport.width/2,args.viewport.height/2)).asArray())
 
-                    d = distPtToLine(self.parent.mesh_points, clickPos3D, cameraPos)
-                    '''
-                    print("start")
-                    t = time.time()
+                        # Gets the distance of points to click line parallel to view direction                      
+                        d = distPtToLine(self.parent.mesh_points, clickPos3D, clickPos3D + (cameraPos-centerPos))
 
-                    v = isPointInvisiblePerspecive(self.parent.mesh_points,cameraPos, self.parent.mesh_tris)
+                    # Adds the indices of points closer than the selection radius to the selection set
+                    for i, j in enumerate(d):
+                        if j < self.parent.fsRadius.value/10:
+                            # Adds selection points if shift is not held
+                            if(not args.keyboardModifiers == 33554432):
+                                self.parent.selected_points.add(i)
+                            # Removes selection points when shift is held
+                            else:
+                                if(i in self.parent.selected_points):
+                                    self.parent.selected_points.remove(i)
 
-                    print()
-                    print("Time:")
-                    print(time.time()-t)
-                    print()
-                    '''
-                    for i, j in enumerate(self.parent.mesh_points):
-                        if d[i] < self.parent.floatSpinner.value/10:
-                            self.parent.selected_points.add(i)
-
-                    #Update UI
-                    self.parent.boolValue.value = False
-                    self.parent.boolValue.value = True
+                    # Updates number of selected points (this also triggers the inputChangedEventHandler)
+                    self.parent.tbSelected.text = "{} Selected".format(len(self.parent.selected_points))
             except:
                 print(traceback.format_exc())
 
@@ -620,20 +1031,39 @@ class VertexSelectionInput:
 
         def notify(self, args):
             try:
-                inputChanged = args.input
-                if inputChanged.id == "vertexSelectionMesh":
-                    if inputChanged.selectionCount == 1:
-                        inputChanged.hasFocus = False
-                        #TO-DO use nodeCoordinatesAsDouble (returns 1D list that needs to be seperated but is probably faster)
-                        nc = inputChanged.selection(0).entity.displayMesh.nodeCoordinates
+                if args.input.id == "fsViRadius":
+                    global pers
+                    pers["fsViRadius"] = args.input.value
+                # Resonsible for translating mesh when one is selected
+                if args.input.id == "siViMesh":
+                    if args.input.selectionCount == 1:
 
-                        mat = GetRootMatrix(inputChanged.selection(0).entity.parentComponent)
+                        # Takes focus away from the selection input so clicking vertices does not deselect the mesh
+                        args.input.hasFocus = False
 
+                        # Gets node (vertx) coordinates from the display mesh.
+                        # The display mesh should be the same as the actual mesh, but the actual mesh has a bug resulting in incorect coordinates
+                        nc = args.input.selection(0).entity.displayMesh.nodeCoordinates
+
+                        # Gets the transformation matrix to to transform the local space coordinates to world space
+                        mat = GetRootMatrix(args.input.selection(0).entity.parentComponent)
+
+                        # Transforms the coordinates to world space
                         for i in nc:
                             i.transformBy(mat)
-                        self.parent.mesh_points = np.array( [ [i.x, i.y, i.z] for i in nc] )
 
-                        self.parent.mesh_tris = self.parent.mesh_points[np.array(inputChanged.selection(0).entity.displayMesh.nodeIndices)].reshape(-1,3,3)
+                        # Converts coordinates to np array 
+                        self.parent.mesh_points = np.array([[i.x, i.y, i.z] for i in nc])
+
+                        # Gets the triangles associated with the mesh
+                        self.parent.mesh_tris = self.parent.mesh_points[np.array(args.input.selection(0).entity.displayMesh.nodeIndices)].reshape(-1,3,3)
+
+                    # Clears mesh data when mesh is deselected 
+                    else:
+                        self.parent.mesh_points = None
+                        self.parent.mesh_tris = None
+                        self.parent.selected_points = set()
+                        self.parent.tbSelected.text = "0 Selected"
 
             except:
                 print(traceback.format_exc())
@@ -646,15 +1076,19 @@ class VertexSelectionInput:
 
         def notify(self, args):
             try:
-                if self.parent.mesh_points is not None:
+                # Highlights selected mesh points
+                if self.parent.mesh_points is not None and len(self.parent.selected_points) > 0:
+                    
+                    # Gets the selected points
                     pts = self.parent.mesh_points[list(self.parent.selected_points)]
 
+                    # Creates a new CustomGraphicsGroup
                     cgg = adsk.core.Application.get().activeProduct.rootComponent.customGraphicsGroups.add()
 
-                    print(np.asarray(pts.reshape(-1), dtype='d'))
-
+                    # Generates CustomGraphicsCoordinates from selected points
                     coords = adsk.fusion.CustomGraphicsCoordinates.create(np.asarray(pts.reshape(-1), dtype='d'))
                     
+                    # Adds the CustomGraphicsCoordinates to the CustomGraphicsGroup
                     cgg.addPointSet(coords, range(len(pts)), 0, 'TestPoint.png')
             except:
                 print(traceback.format_exc())
