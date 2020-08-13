@@ -1,7 +1,8 @@
 # Reverse
 
 Add-In for Autodesk Fusion360.    
-Reconstructs BRep Surfaces from mesh points  
+Reconstructs BRep Surfaces from mesh points
+Generates geometry very close to the original source file, generally within 1e-6mm.
 
 # Use
 
@@ -26,8 +27,8 @@ Reconstructs BRep Surfaces from mesh points
 * Download the Project as ZIP and extract it somewhere you can find again, but won't bother you. (or use git to clone it there)
 * Open Fusion360 and press ADD-INS > Scripts and Add-ins
 * Select the tab Add-Ins and click the green plus symbol next to "My Add-Ins"
-* Navigate to the extracted Project forlder and hit open
-* The Add-in should now appear in the "My Add-Ins" list. Select it in the list. If desired check the "Run ond Startup" checkbox and hit run.
+* Navigate to the extracted Project folder and hit open
+* The Add-in should now appear in the "My Add-Ins" list. Select it in the list. If desired check the "Run on Startup" checkbox and hit run.
 * The Commands will appear as SURFACE > CREATE
 
 # Changelog
