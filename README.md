@@ -1,7 +1,7 @@
 # Reverse
 
 Add-In for Autodesk Fusion360.    
-Reconstructs BRep Surfaces from mesh points
+Reconstructs BRep Surfaces from mesh points.    
 Generates geometry very close to the original source file, generally within 1e-6mm.
 
 # Use
