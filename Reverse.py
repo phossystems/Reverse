@@ -15,7 +15,10 @@ script_path = os.path.abspath(inspect.getfile(inspect.currentframe()))
 script_name = os.path.splitext(os.path.basename(script_path))[0]
 script_dir = os.path.dirname(script_path)
 
-sys.path.append(script_dir + "/Modules")
+if os.name == "posix":  
+    sys.path.append(script_dir + "/ModulesMac")
+else:
+    sys.path.append(script_dir + "/ModulesWin")
 
 try:
     import numpy as np
@@ -1089,7 +1092,7 @@ class VertexSelectionInput:
                     coords = adsk.fusion.CustomGraphicsCoordinates.create(np.asarray(pts.reshape(-1), dtype='d'))
                     
                     # Adds the CustomGraphicsCoordinates to the CustomGraphicsGroup
-                    cgg.addPointSet(coords, range(len(pts)), 0, 'TestPoint.png')
+                    cgg.addPointSet(coords, range(len(pts)), 0, 'Resources/point.png')
             except:
                 print(traceback.format_exc())
 
