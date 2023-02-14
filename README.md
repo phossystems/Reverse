@@ -1,4 +1,7 @@
-# Reverse
+# Reverse [Deprecated]
+
+**This extension currently does not work due to relying on external libaraies broken in a recen fusion update, and will likely remain that way. If you know your way around python and importing modules you can find more information here:**
+https://github.com/NicoSchlueter/Reverse/issues/3#issuecomment-1429808075
 
 Add-In for Autodesk Fusion360.    
 Reconstructs BRep Surfaces from mesh points.    
